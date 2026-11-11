@@ -69,7 +69,7 @@ Example of what the engine should produce from "We're replacing MongoDB with Pos
 
 ## Status
 
-Code is written but **has not been run yet** (only syntax-checked). No Supabase project exists yet.
+Milestone 1 done: runs end to end against a Supabase cloud project (create project → record decision → worker → search). Tests: `cd backend && pytest` (integration tests against the real DB; stop the dev server first, since `claim_job()` is global).
 
 ## Run
 
@@ -87,13 +87,13 @@ uvicorn app.main:app --reload
 ## TODO
 
 **Get it running (Milestone 1)**
-- [ ] Create Supabase project; create an Auth user and note its UUID
-- [ ] Install Supabase CLI; `supabase link` and `supabase db push`
-- [ ] Install Python 3.10+, create venv, install requirements
-- [ ] Fill in `backend/.env`
-- [ ] Start server; verify create project → record decision → worker processes job → search returns it
-- [ ] Fix whatever breaks on first run
-- [ ] Add tests (supersession logic, proposed vs approved rules, job claiming)
+- [x] Create Supabase project; create an Auth user and note its UUID
+- [x] Install Supabase CLI; `supabase link` and `supabase db push`
+- [x] Install Python 3.10+, create venv, install requirements
+- [x] Fill in `backend/.env`
+- [x] Start server; verify create project → record decision → worker processes job → search returns it
+- [x] Fix whatever breaks on first run
+- [x] Add tests (supersession logic, proposed vs approved rules, job claiming)
 
 **Connect clients**
 - [ ] Connect Claude via `/mcp/` and test all five tools
