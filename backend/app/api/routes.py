@@ -44,7 +44,7 @@ def create_project(body: ProjectIn):
 
 @router.get("/projects", operation_id="list_projects")
 def list_projects():
-    return sb.table("projects").select("*").eq("owner_id", settings.KEYSTONE_OWNER_ID).execute().data
+    return service.list_projects()
 
 
 @router.post("/projects/{project_id}/events", operation_id="add_event")

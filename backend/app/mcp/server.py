@@ -12,34 +12,55 @@ mcp = FastMCP("keystone", stateless_http=True,
               transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 mcp.settings.streamable_http_path = "/"
 
-
-@mcp.tool()
-def get_project_state(project_id: str) -> dict:
-    """Current project overview: active decisions and open tasks."""
-    return service.get_project_state(project_id)
+PROJECT_DOC = ("`project` is a project name or ID; leave it empty if the user has only one project. "
+               "Never ask the user for an ID: call list_projects and pick the match from context.")
 
 
 @mcp.tool()
-def search_context(project_id: str, query: str, limit: int = 10) -> list[dict]:
-    """Semantic search over project decisions and source text."""
-    return service.search_context(project_id, query, limit)
+def list_projects() -> list[dict]:
+    """The user's projects (id, name, description). Use to pick the project the conversation is about."""
+    return service.list_projects()
 
 
-@mcp.tool()
-def get_decisions(project_id: str, include_history: bool = False) -> list[dict]:
-    """Decisions; set include_history to also see superseded ones."""
-    return service.get_decisions(project_id, include_history)
+@mcp.tool(description=f"Current project overview: active decisions and open tasks. {PROJECT_DOC}")
+def get_project_state(project: str = "") -> dict:
+    return service.get_project_state(service.resolve_project(project))
 
 
-@mcp.tool()
-def get_open_tasks(project_id: str) -> list[dict]:
-    """Outstanding tasks."""
-    return service.get_open_tasks(project_id)
+@mcp.tool(description=f"Semantic search over project decisions and source text. {PROJECT_DOC}")
+def search_context(query: str, limit: int = 10, project: str = "") -> list[dict]:
+    return service.search_context(service.resolve_project(project), query, limit)
 
 
-@mcp.tool()
-def record_decision(project_id: str, client: Literal["claude", "chatgpt"], title: str,
-                    value: str, reason: str = "", subject: str = "") -> dict:
-    """Submit a decision. It is stored as 'proposed' until a human approves it."""
-    return service.add_event(project_id, client, "decision_proposed",
-                             {"title": title, "value": value, "reason": reason, "subject": subject or title})
+@mcp.tool(description=f"Decisions; set include_history to also see superseded ones. {PROJECT_DOC}")
+def get_decisions(include_history: bool = False, project: str = "") -> list[dict]:
+    return service.get_decisions(service.resolve_project(project), include_history)
+
+
+@mcp.tool(description=f"Outstanding tasks. {PROJECT_DOC}")
+def get_open_tasks(project: str = "") -> list[dict]:
+    return service.get_open_tasks(service.resolve_project(project))
+
+
+@mcp.tool(description=f"""Record a project decision so every AI tool shares it.
+
+Call this, without being asked, whenever the user commits to a choice ("yeah we'll go with MongoDB",
+"we're now using Postgres"), or when you suggest one worth tracking.
+
+- decided_by="user": the user themselves stated or agreed to the decision. user_quote MUST be their
+  exact words. Stored as approved. Do not use this for hedged statements ("maybe postgres?").
+- decided_by="ai_suggestion": your own recommendation. Stored as proposed until the user confirms.
+
+subject is the topic the decision is about (e.g. "database", "auth provider"). Call get_decisions first
+and reuse an existing subject, so the new decision supersedes the old one instead of duplicating it.
+value is the choice itself (e.g. "PostgreSQL"). {PROJECT_DOC}""")
+def record_decision(client: Literal["claude", "chatgpt"], title: str, subject: str, value: str,
+                    decided_by: Literal["user", "ai_suggestion"], user_quote: str = "",
+                    reason: str = "", project: str = "") -> dict:
+    if decided_by == "user" and not user_quote.strip():
+        raise ValueError("decided_by='user' requires user_quote: the user's exact words")
+    payload = {"title": title, "value": value, "reason": reason, "subject": subject}
+    if decided_by == "user":
+        payload["user_quote"] = user_quote
+    return service.add_event(service.resolve_project(project), client,
+                             "decision_confirmed" if decided_by == "user" else "decision_proposed", payload)

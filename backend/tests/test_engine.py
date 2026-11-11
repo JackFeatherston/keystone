@@ -23,8 +23,8 @@ def project():
     sb.table("projects").delete().eq("id", p["id"]).execute()
 
 
-def decide(pid, source, etype, value, subject="database"):
-    ev = service.add_event(pid, source, etype, {"title": f"Use {value}", "subject": subject, "value": value, "reason": "r"})
+def decide(pid, source, etype, value, subject="database", **extra):
+    ev = service.add_event(pid, source, etype, {"title": f"Use {value}", "subject": subject, "value": value, "reason": "r", **extra})
     context_engine.process_event(ev)
     sb.table("jobs").delete().eq("event_id", ev["id"]).execute()  # processed directly; don't leave a pending job
     return ev
@@ -68,6 +68,53 @@ def test_approving_same_value_versions_existing_entity(project):
     assert len(ents) == 1 and ents[0]["status"] == "approved"
     versions = sb.table("entity_versions").select("version,status").eq("entity_id", ents[0]["id"]).order("version").execute().data
     assert [(v["version"], v["status"]) for v in versions] == [(1, "proposed"), (2, "approved")]
+
+
+def test_user_confirmed_decision_from_ai_client_is_approved_with_quote(project):
+    decide(project, "chatgpt", "decision_confirmed", "PostgreSQL", user_quote="yeah we're now using postgres")
+    (ent,) = entities(project, type="decision")
+    assert ent["status"] == "approved"
+    assert ent["current_state"]["user_quote"] == "yeah we're now using postgres"
+    assert ent["current_state"]["source"] == "chatgpt"
+
+
+def test_confirmed_decision_without_quote_stays_proposed(project):
+    decide(project, "claude", "decision_confirmed", "PostgreSQL")
+    decide(project, "claude", "decision_confirmed", "MySQL", subject="other", user_quote="   ")
+    assert {e["status"] for e in entities(project, type="decision")} == {"proposed"}
+
+
+def test_user_confirmed_decision_supersedes_previous(project):
+    decide(project, "claude", "decision_confirmed", "MongoDB", user_quote="yeah we'll go with mongodb")
+    decide(project, "chatgpt", "decision_confirmed", "PostgreSQL", user_quote="we're now using postgres")
+    by_value = {e["current_state"]["value"]: e["status"] for e in entities(project, type="decision")}
+    assert by_value == {"MongoDB": "superseded", "PostgreSQL": "approved"}
+
+
+def test_user_confirming_ai_suggestion_versions_existing_entity(project):
+    decide(project, "claude", "decision_proposed", "PostgreSQL")
+    decide(project, "claude", "decision_confirmed", "PostgreSQL", user_quote="yes, do that")
+    (ent,) = entities(project, type="decision")
+    assert ent["status"] == "approved"
+
+
+# ---- project resolution / MCP tool ----
+def test_resolve_project_by_id_and_name(project):
+    name = sb.table("projects").select("name").eq("id", project).single().execute().data["name"]
+    assert service.resolve_project(project) == project
+    assert service.resolve_project(name.upper()) == project
+    with pytest.raises(ValueError):
+        service.resolve_project("no-such-project-xyz")
+
+
+def test_mcp_record_decision_requires_quote_for_user_decisions(project):
+    from app.mcp import server
+    with pytest.raises(ValueError):
+        server.record_decision("claude", "Use Postgres", "database", "PostgreSQL", "user", project=project)
+    ev = server.record_decision("claude", "Use Postgres", "database", "PostgreSQL", "user",
+                                user_quote="yeah we're now using postgres", project=project)
+    sb.table("jobs").delete().eq("event_id", ev["id"]).execute()
+    assert ev["event_type"] == "decision_confirmed" and ev["payload"]["user_quote"]
 
 
 def test_tasks_are_open_and_listed(project):

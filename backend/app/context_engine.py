@@ -2,10 +2,12 @@
 
 Events carry structured payloads, so no LLM extraction is needed yet. Rules:
 - decision_proposed  -> entity status 'proposed'
-- decision_approved  -> entity status 'approved'
+- decision_approved  -> entity status 'approved' (source 'manual' only)
+- decision_confirmed -> entity status 'approved': a decision the user stated in conversation, relayed
+  by an AI client with the user's verbatim words (payload 'user_quote') as provenance
 - A new proposed/approved decision on the same subject supersedes the previous active one
   (kept as history, linked with a 'supersedes' relationship).
-- AI-submitted claims never start above 'proposed'; only source 'manual' can approve.
+- AI-inferred claims never start above 'proposed'.
 """
 from .db import supabase as sb
 from .embeddings import embed
@@ -28,17 +30,24 @@ def process_event(event: dict) -> None:
     _embed_row(project_id, p.get("text") or f"{p.get('title', '')} {p.get('reason', '')}".strip(),
                event_id=event["id"])
 
-    if etype not in ("decision_proposed", "decision_approved", "task_created"):
+    if etype not in ("decision_proposed", "decision_approved", "decision_confirmed", "task_created"):
         return
 
     is_task = etype == "task_created"
-    status = "open" if is_task else ("approved" if etype == "decision_approved" else "proposed")
-    if status == "approved" and event["source"] != "manual":
-        status = "proposed"  # AI claims are not verified state
+    if is_task:
+        status = "open"
+    elif etype == "decision_approved" and event["source"] == "manual":
+        status = "approved"
+    elif etype == "decision_confirmed" and (p.get("user_quote") or "").strip():
+        status = "approved"  # user's own decision, relayed with their words as evidence
+    else:
+        status = "proposed"  # AI-inferred claims are not verified state
 
     subject = p.get("subject") or p["title"]
     etype_col = "task" if is_task else "decision"
     state = {"value": p.get("value"), "reason": p.get("reason"), "source": event["source"]}
+    if p.get("user_quote"):
+        state["user_quote"] = p["user_quote"]
 
     prior = (sb.table("entities").select("*").eq("project_id", project_id)
              .eq("type", etype_col).eq("subject", subject).in_("status", ACTIVE + ["open"])

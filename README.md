@@ -16,7 +16,7 @@ If that can't be demonstrated, the rest of the architecture doesn't matter. The 
 
 - **Events are the source of truth.** Events are append-only (what happened, when, from where). Entities are a derived, rebuildable projection of current state. Never silently overwrite history; new decisions create new versions and supersede old ones.
 - **Provenance everywhere.** Every extracted fact links back to its source event so Keystone can explain where its understanding came from.
-- **Separate proposals from reality.** Proposed decision ≠ approved decision ≠ implemented change. An AI-generated claim never becomes verified state automatically.
+- **Separate proposals from reality.** Proposed decision ≠ approved decision ≠ implemented change. An AI-*inferred* claim never becomes verified state automatically; a decision the user states in conversation, relayed with their exact words as provenance, does.
 - **Hybrid context management.** Automatic ingestion, human approval for important state changes. An LLM should not silently rewrite a project's source of truth.
 - **Everything scoped to a project** (isolation, retrieval, RLS).
 - **Keep MCP tools simple;** the intelligence lives in the backend.
@@ -63,7 +63,7 @@ backend/app/
   embeddings.py        Ollama client
 ```
 
-MCP tools: `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `record_decision`.
+MCP tools: `list_projects`, `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `record_decision`. All but `list_projects` take an optional `project` (name or ID).
 
 Example of what the engine should produce from "We're replacing MongoDB with PostgreSQL because our data relationships are getting complex": a new active decision (subject `database`, value PostgreSQL, with reason and source), while the MongoDB decision becomes `superseded` and linked, but stays queryable as history.
 
@@ -102,20 +102,16 @@ uvicorn app.main:app --reload
 - [x] Connect Claude via `/mcp/` and test all five tools
 - [x] Expose via HTTPS (cloudflared) and connect ChatGPT (connector, `?key=` auth)
 
-### Open question: how do humans approve decisions?
+### Decided: conversational approval
 
-AI clients (Claude, ChatGPT) can only *propose*: `record_decision` stores `proposed`, and `context_engine.py` downgrades any non-`manual` source back to `proposed`. ChatGPT has no approval action, so e.g. the MongoDB decision stays `proposed` until a human acts. Options:
+The user shouldn't have to re-explain context or name-drop IDs. Saying "yeah we're now using postgres" to any AI should record it. The line is between **user-stated** and **AI-inferred** claims, not between human and AI clients:
 
-| Option | Pros | Cons |
-|---|---|---|
-| **A. Keep the curl** (`POST /projects/{id}/decisions` with `source: "manual"`, `approved: true`, same subject + value) | Already works, zero code | Must retype the full decision; easy to typo the subject/value and create a new entity instead of approving the existing one |
-| **B. `POST /decisions/{id}/approve` (ID-based endpoint)** | Small change, no retyping, can't drift from the proposal; keeps the AI-can't-approve rule | Still need to look up the ID and use curl or a script |
-| **C. Approval UI** | Best UX; fits the human-in-the-loop principle | Biggest build; likely belongs with the Milestone 2 approval flow |
-| **D. Expose an approve tool to AI clients** | Fully conversational | Defeats the point: AI-submitted claims would be verifying themselves. Rejected |
+- `record_decision(decided_by="user", user_quote="<user's exact words>")` → `decision_confirmed` event → **approved**. The quote is stored in the entity state as provenance.
+- `record_decision(decided_by="ai_suggestion")` → `decision_proposed` → **proposed** until the user confirms (confirming the same subject + value versions the same entity).
+- Tool descriptions tell models to record decisions unprompted, to skip hedged statements, and to call `get_decisions` first and reuse the existing `subject` so supersession works.
+- MCP tools take an optional `project` (name or ID; empty if there's only one project), plus a `list_projects` tool.
 
-Leaning: B now, C as part of Milestone 2's approval flow.
-
-Related, not yet done: add a `list_projects` MCP tool (clients currently need an explicit `project_id`), and document `subject` and the propose-only behaviour in the `record_decision` docstring so models set the subject and don't claim approval.
+Tradeoff: this trusts the AI client to report honestly that the user decided. The verbatim quote keeps every approval auditable, and a wrong one is fixed by stating the correction (which supersedes it). Revisit for teams. The manual REST path (`source: "manual"`, `approved: true`) still works as a fallback. The approval UI (Milestone 2) becomes an audit/review view rather than a gate.
 
 **Context engine (Milestone 2)**
 - [ ] LLM extraction of decisions/tasks/constraints/components/observations from free text (hybrid: proposals need human approval)
