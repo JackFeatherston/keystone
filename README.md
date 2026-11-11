@@ -102,6 +102,21 @@ uvicorn app.main:app --reload
 - [x] Connect Claude via `/mcp/` and test all five tools
 - [x] Expose via HTTPS (cloudflared) and connect ChatGPT (connector, `?key=` auth)
 
+### Open question: how do humans approve decisions?
+
+AI clients (Claude, ChatGPT) can only *propose*: `record_decision` stores `proposed`, and `context_engine.py` downgrades any non-`manual` source back to `proposed`. ChatGPT has no approval action, so e.g. the MongoDB decision stays `proposed` until a human acts. Options:
+
+| Option | Pros | Cons |
+|---|---|---|
+| **A. Keep the curl** (`POST /projects/{id}/decisions` with `source: "manual"`, `approved: true`, same subject + value) | Already works, zero code | Must retype the full decision; easy to typo the subject/value and create a new entity instead of approving the existing one |
+| **B. `POST /decisions/{id}/approve` (ID-based endpoint)** | Small change, no retyping, can't drift from the proposal; keeps the AI-can't-approve rule | Still need to look up the ID and use curl or a script |
+| **C. Approval UI** | Best UX; fits the human-in-the-loop principle | Biggest build; likely belongs with the Milestone 2 approval flow |
+| **D. Expose an approve tool to AI clients** | Fully conversational | Defeats the point: AI-submitted claims would be verifying themselves. Rejected |
+
+Leaning: B now, C as part of Milestone 2's approval flow.
+
+Related, not yet done: add a `list_projects` MCP tool (clients currently need an explicit `project_id`), and document `subject` and the propose-only behaviour in the `record_decision` docstring so models set the subject and don't claim approval.
+
 **Context engine (Milestone 2)**
 - [ ] LLM extraction of decisions/tasks/constraints/components/observations from free text (hybrid: proposals need human approval)
 - [ ] Contradiction detection and confidence scoring in state resolution
