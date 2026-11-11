@@ -83,8 +83,8 @@ uvicorn app.main:app --reload
 
 - Claude: add `http://localhost:8000/mcp/` as a remote MCP server (Bearer `KEYSTONE_API_KEY`).
 - ChatGPT: needs a public HTTPS URL; connect `/mcp/` as a connector, or import `/openapi.json` as GPT Actions.
-  - **Tunnel: currently cloudflared** (`cloudflared tunnel --url http://localhost:8000`, no account). Quick tunnels get a **new random URL on every start**, so update the ChatGPT plugin URL each session.
-  - **ngrok is the fallback** if we want a stable URL: its free tier includes one static domain (needs signup + authtoken). Not in use now; switch only if re-pasting the URL becomes a pain.
+  - **Tunnel: ngrok** with a free static domain (`ammonia-easing-giggly.ngrok-free.dev`): `ngrok http --url=ammonia-easing-giggly.ngrok-free.dev 8000`. The URL survives restarts, so the ChatGPT connector only needs setting up once. Needs the ngrok authtoken configured (`ngrok config add-authtoken`).
+  - cloudflared quick tunnels (`cloudflared tunnel --url http://localhost:8000`) also work but get a new random URL on every start, which forces recreating the ChatGPT connector.
   - The ChatGPT connector can't send headers, so it authenticates with `/mcp/?key=<KEYSTONE_API_KEY>` (no-auth mode). Test-only; rotate the key after use and replace with real auth later.
 
 ## TODO

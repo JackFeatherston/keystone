@@ -25,6 +25,10 @@ def _run_one() -> bool:
 
 async def worker_loop():
     while True:
-        did_work = await asyncio.to_thread(_run_one)
+        try:
+            did_work = await asyncio.to_thread(_run_one)
+        except Exception:  # e.g. transient network error in claim_job; don't let the loop die
+            log.exception("worker loop error")
+            did_work = False
         if not did_work:
             await asyncio.sleep(2)
