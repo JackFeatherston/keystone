@@ -96,8 +96,8 @@ uvicorn app.main:app --reload
 - [x] Add tests (supersession logic, proposed vs approved rules, job claiming)
 
 **Connect clients**
-- [ ] Connect Claude via `/mcp/` and test all five tools
-- [ ] Expose via HTTPS (ngrok) and connect ChatGPT (connector or Actions)
+- [x] Connect Claude via `/mcp/` and test all five tools
+- [x] Expose via HTTPS (cloudflared) and connect ChatGPT (connector, `?key=` auth)
 
 **Context engine (Milestone 2)**
 - [ ] LLM extraction of decisions/tasks/constraints/components/observations from free text (hybrid: proposals need human approval)

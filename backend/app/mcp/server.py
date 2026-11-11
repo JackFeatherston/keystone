@@ -3,10 +3,13 @@
 from typing import Literal
 
 from mcp.server.fastmcp import FastMCP
+from mcp.server.transport_security import TransportSecuritySettings
 
 from .. import service
 
-mcp = FastMCP("keystone", stateless_http=True)
+# Host-header (DNS rebinding) check would reject tunnel hostnames; /mcp is already key-protected in main.py.
+mcp = FastMCP("keystone", stateless_http=True,
+              transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 mcp.settings.streamable_http_path = "/"
 
 
