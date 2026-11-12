@@ -58,10 +58,17 @@ recommend something worth tracking. Keystone extracts decisions, constraints and
 messages: the relevant turns, in order. USER messages MUST be copied verbatim (their exact words are the
 evidence that they decided something; paraphrased user text is only stored as a proposal). Include the
 assistant turn the user is responding to when they say things like "yes, do that". Keep it to the
-relevant excerpt, not the whole conversation. {PROJECT_DOC}""")
+relevant excerpt, not the whole conversation.
+
+Extraction runs in the background, so this call does not tell you what was recorded or with what status
+(approved, proposed, task). Don't tell the user how it was recorded; if they ask, check get_decisions /
+get_open_tasks / list_proposals. {PROJECT_DOC}""")
 def log_context(client: Literal["claude", "chatgpt"], messages: list[Message], project: str = "") -> dict:
     ev = service.log_context(service.resolve_project(project), client, [m.model_dump() for m in messages])
-    return {"queued": True, "event_id": ev["id"]}
+    return {"queued": True, "event_id": ev["id"],
+            "note": "Extraction is running in the background; the outcome is not known yet. Don't tell the "
+                    "user whether it was recorded as approved or proposed. Check get_decisions, "
+                    "get_open_tasks or list_proposals if they ask."}
 
 
 @mcp.tool(description=f"""AI-inferred decisions, constraints and tasks awaiting the user's review.

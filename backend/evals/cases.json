@@ -63,6 +63,13 @@
     "expected": [{"kind": "task", "status": "open", "match": ["migration"]}]
   },
   {
+    "name": "user needs a task done (real chatgpt excerpt)",
+    "messages": [
+      {"role": "user", "content": "i need to add rate limiting before launch"}
+    ],
+    "expected": [{"kind": "task", "status": "open", "match": ["rate limit"]}]
+  },
+  {
     "name": "assistant suggests a task",
     "messages": [
       {"role": "user", "content": "the tests keep failing randomly"},

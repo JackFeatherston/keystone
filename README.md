@@ -147,7 +147,14 @@ Known tensions: a 7–8B model is weakest at exactly the user-stated vs. AI-infe
 - [x] MCP review tools (`list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`) → integration tests for proposed → approved → implemented
 - [x] Retire direct `record_decision` from MCP; all AI clients use `log_context` (REST `record_decision` kept as the manual fallback)
 - [x] Resolution fixes surfaced by extraction: an AI proposal never supersedes or downgrades approved state; confirming a proposal supersedes the old approved one
-- [ ] Re-test both clients against the new tools (Claude + ChatGPT connector) and check they call `log_context` unprompted with verbatim user text
+- [x] Re-test ChatGPT connector against the new tools → calls `log_context` unprompted with verbatim user text; skips questions and hedged statements; Memcached superseded Redis; confirm/reject work (tested 2026-11-12 on `mcp-smoke-test`)
+- [x] Fix: ChatGPT told the user a decision was a "proposal" when the server had approved it, because `log_context` only returns `queued`. Tool description + response `note` now say the outcome is unknown and to check `get_decisions` etc.
+- [ ] Re-test Claude (claude.ai or desktop → Settings → Connectors → custom connector at `https://<ngrok domain>/mcp/?key=<KEYSTONE_API_KEY>`). Same script: a decision, a question, a hedged statement, a supersession, a task, then confirm/reject proposals. Check it calls `log_context` without being asked and copies user text verbatim
+- [ ] Refresh the ChatGPT connector and re-check that it no longer states approved/proposed after `log_context`
+- [ ] Commit today's changes (`app/mcp/server.py`, new eval case, README)
+- [ ] Extraction: "i need to add rate limiting before launch" should be an open task. Live it came out as a proposed task, in the eval as an approved constraint (new case in `evals/cases.json`, currently failing). Eval is now 0.81 / 0.76 / 0.76 on 19 cases; check run-to-run variance before tuning
+- [ ] Known gap: `confirm_proposal` only checks that `user_quote` is non-empty, so a client can approve with text the user never said. In the ChatGPT test the quote was generated from the user's button choices (acceptable). Decide whether this needs a guard
+- [ ] Note: ChatGPT invented an assistant turn in one `log_context` excerpt. Harmless now (only user text is evidence), but keep in mind
 - [ ] (Later in M2) Contradiction detection and confidence scoring in state resolution
 - [ ] (Later in M2) Rebuild entities from events (reprocessing when logic improves)
 
