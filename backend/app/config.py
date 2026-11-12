@@ -10,6 +10,7 @@ class Settings(BaseSettings):
     KEYSTONE_OWNER_ID: str
     OLLAMA_URL: str = "http://localhost:11434"
     EMBEDDING_MODEL: str = "nomic-embed-text"
+    EXTRACTION_MODEL: str = "qwen2.5:7b-instruct"
 
 
 settings = Settings()

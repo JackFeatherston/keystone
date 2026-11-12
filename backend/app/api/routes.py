@@ -72,6 +72,25 @@ def tasks(project_id: str):
     return service.get_open_tasks(project_id)
 
 
+class ContextIn(BaseModel):
+    source: Literal["claude", "chatgpt", "manual"]
+    messages: list[dict]  # [{role: user|assistant, content}]
+
+
+@router.post("/projects/{project_id}/context", operation_id="log_context")
+def log_context(project_id: str, body: ContextIn):
+    try:
+        return service.log_context(project_id, body.source, body.messages)
+    except ValueError as e:
+        raise HTTPException(422, str(e))
+
+
+@router.get("/projects/{project_id}/proposals", operation_id="list_proposals")
+def proposals(project_id: str):
+    return service.list_proposals(project_id)
+
+
+# Manual fallback (source "manual" can approve directly). AI clients use log_context instead.
 @router.post("/projects/{project_id}/decisions", operation_id="record_decision")
 def record_decision(project_id: str, body: DecisionIn):
     kind = "decision_approved" if body.approved else "decision_proposed"

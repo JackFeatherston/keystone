@@ -57,13 +57,15 @@ supabase/migrations/   SQL schema, RLS, claim_job(), match_embeddings()
 backend/app/
   api/                 REST routes + API-key auth
   context_engine.py    events -> entities/versions/relationships + embeddings
+  extraction.py        excerpt -> decisions/constraints/tasks (Ollama) + verbatim-quote guard
   jobs/worker.py       job loop
   mcp/server.py        MCP tools
   service.py           shared operations (REST + MCP)
   embeddings.py        Ollama client
+backend/evals/         extraction eval set (cases.json) + scorer (run_eval.py)
 ```
 
-MCP tools: `list_projects`, `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `record_decision`. All but `list_projects` take an optional `project` (name or ID).
+MCP tools: `list_projects`, `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `log_context`, `list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`. All but `list_projects` take an optional `project` (name or ID).
 
 Example of what the engine should produce from "We're replacing MongoDB with PostgreSQL because our data relationships are getting complex": a new active decision (subject `database`, value PostgreSQL, with reason and source), while the MongoDB decision becomes `superseded` and linked, but stays queryable as history.
 
@@ -71,10 +73,20 @@ Example of what the engine should produce from "We're replacing MongoDB with Pos
 
 Milestone 1 done: runs end to end against a Supabase cloud project (create project → record decision → worker → search). Tests: `cd backend && pytest` (integration tests against the real DB; stop the dev server first, since `claim_job()` is global).
 
+Milestone 2 core done: `log_context` → server-side extraction (Ollama `qwen2.5:7b-instruct`) → guarded entity events → MCP review. Extraction eval: `cd backend && python -m evals.run_eval [--model <ollama model>] [-v]` (needs Ollama running; no DB writes).
+
+| Eval (18 cases) | precision | recall | correct status |
+|---|---|---|---|
+| qwen2.5:7b, first prompt | 0.69 | 0.69 | 0.69 |
+| qwen2.5:7b, current prompt | 0.87 | 0.81 | 0.81 |
+| llama3.1:8b, current prompt | 0.72 | 0.81 | 0.75 |
+
+Remaining misses are in the safe direction (unanswered assistant suggestions dropped, one decision filed as a task), not false approvals. Grow `evals/cases.json` from real excerpts before tuning further; 18 cases is easy to overfit.
+
 ## Run
 
 ```
-ollama pull nomic-embed-text
+ollama pull nomic-embed-text && ollama pull qwen2.5:7b-instruct
 supabase link --project-ref <ref> && supabase db push
 cd backend && python3.12 -m venv .venv && . .venv/bin/activate && pip install -r requirements.txt   # needs Python 3.10+
 cp .env.example .env   # fill in
@@ -104,6 +116,8 @@ uvicorn app.main:app --reload
 
 ### Decided: conversational approval
 
+> Milestone 2 replaced the MCP `record_decision` tool with `log_context` + server-side extraction (see below). The user-stated vs. AI-inferred principle is unchanged; the `decision_confirmed` / `decision_proposed` events below are now emitted by the extractor.
+
 The user shouldn't have to re-explain context or name-drop IDs. Saying "yeah we're now using postgres" to any AI should record it. The line is between **user-stated** and **AI-inferred** claims, not between human and AI clients:
 
 - `record_decision(decided_by="user", user_quote="<user's exact words>")` → `decision_confirmed` event → **approved**. The quote is stored in the entity state as provenance.
@@ -111,13 +125,31 @@ The user shouldn't have to re-explain context or name-drop IDs. Saying "yeah we'
 - Tool descriptions tell models to record decisions unprompted, to skip hedged statements, and to call `get_decisions` first and reuse the existing `subject` so supersession works.
 - MCP tools take an optional `project` (name or ID; empty if there's only one project), plus a `list_projects` tool.
 
-Tradeoff: this trusts the AI client to report honestly that the user decided. The verbatim quote keeps every approval auditable, and a wrong one is fixed by stating the correction (which supersedes it). Revisit for teams. The manual REST path (`source: "manual"`, `approved: true`) still works as a fallback. The approval UI (Milestone 2) becomes an audit/review view rather than a gate.
+Tradeoff: this trusts the AI client to report honestly that the user decided. The verbatim quote keeps every approval auditable, and a wrong one is fixed by stating the correction (which supersedes it). Revisit for teams. The manual REST path (`source: "manual"`, `approved: true`) still works as a fallback. Review becomes an audit step rather than a gate (via MCP tools in Milestone 2; see below). Milestone 2 moves this user-stated vs. AI-inferred judgement from the client into server-side extraction.
+
+### Decided: Milestone 2 direction
+
+Focus is **engine depth, specifically extraction quality**.
+
+- **Server-side extraction.** Clients push conversation excerpts via a new MCP tool (`log_context`); a backend LLM extracts decisions/tasks/constraints as entities with provenance back to the excerpt event. Extraction logic lives in one place and can be reprocessed when it improves.
+- **Local LLM via Ollama**, sized for a 16GB Apple Silicon machine (7–8B, e.g. `qwen2.5:7b` / `llama3.1:8b`).
+- **Single path.** Everything routes through extraction, including user-stated decisions; the direct `record_decision` path is retired once `log_context` works.
+- **Verbatim-quote guard.** The extractor only auto-approves a user-stated decision if its `user_quote` appears verbatim in the excerpt; everything else is a proposal. This keeps a small model's mistakes from becoming verified state.
+- **Review via MCP**, no UI yet: `list_proposals`, `confirm_proposal`, `mark_implemented`.
+- **Measured, not eyeballed.** A labeled eval set (excerpts → expected entities) with a precision/recall script, used to compare prompts and models.
+
+Known tensions: a 7–8B model is weakest at exactly the user-stated vs. AI-inferred distinction, so expect more legitimate decisions to land as proposals than with today's client-side calls. Pushed excerpts still depend on the client choosing to call the tool, so eval cases should look like what clients actually send, not clean transcripts.
 
 **Context engine (Milestone 2)**
-- [ ] LLM extraction of decisions/tasks/constraints/components/observations from free text (hybrid: proposals need human approval)
-- [ ] Contradiction detection and confidence scoring in state resolution
-- [ ] Approval flow for proposed → approved → implemented
-- [ ] Rebuild entities from events (reprocessing when logic improves)
+- [x] Eval set + scoring script (fixtures of realistic excerpts with expected entities; precision/recall per entity type) → baseline score
+- [x] `log_context` MCP tool → `context_logged` event → extraction job → Ollama extractor producing decisions/tasks/constraints with provenance → eval score reported, tests pass
+- [x] Verbatim-quote rule for auto-approval → eval case with a paraphrased quote yields a proposal
+- [x] MCP review tools (`list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`) → integration tests for proposed → approved → implemented
+- [x] Retire direct `record_decision` from MCP; all AI clients use `log_context` (REST `record_decision` kept as the manual fallback)
+- [x] Resolution fixes surfaced by extraction: an AI proposal never supersedes or downgrades approved state; confirming a proposal supersedes the old approved one
+- [ ] Re-test both clients against the new tools (Claude + ChatGPT connector) and check they call `log_context` unprompted with verbatim user text
+- [ ] (Later in M2) Contradiction detection and confidence scoring in state resolution
+- [ ] (Later in M2) Rebuild entities from events (reprocessing when logic improves)
 
 **Retrieval (Milestone 3)**
 - [ ] Hybrid search (vector + full-text), ranking by relevance, authority, recency, confidence

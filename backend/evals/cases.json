@@ -1,0 +1,147 @@
+[
+  {
+    "name": "direct user decision",
+    "messages": [
+      {"role": "user", "content": "ok I've thought about it, we're going with Postgres for the main db. mongo was getting painful with all the joins"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["postgres"]}]
+  },
+  {
+    "name": "hedged statement is not a decision",
+    "messages": [
+      {"role": "user", "content": "maybe we should use redis for caching? not sure yet, what do you think"},
+      {"role": "assistant", "content": "Redis is a solid choice for caching, but given your scale an in-process LRU cache might be enough to start."}
+    ],
+    "expected": []
+  },
+  {
+    "name": "user agrees to assistant suggestion",
+    "messages": [
+      {"role": "assistant", "content": "For auth I'd recommend Supabase Auth since you're already on Supabase. It gives you JWTs and RLS integration out of the box."},
+      {"role": "user", "content": "yep let's do that"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["supabase"]}]
+  },
+  {
+    "name": "assistant suggestion without agreement",
+    "messages": [
+      {"role": "user", "content": "how should I deploy this thing?"},
+      {"role": "assistant", "content": "I'd suggest Railway: it supports Docker, has a free tier, and deploys from GitHub on push. Fly.io is an alternative if you need edge regions."}
+    ],
+    "expected": [{"kind": "decision", "status": "proposed", "match": ["railway"]}]
+  },
+  {
+    "name": "user rejects suggestion",
+    "messages": [
+      {"role": "assistant", "content": "You could use Celery with Redis for background jobs."},
+      {"role": "user", "content": "no, I don't want to run redis. we'll keep the jobs table in postgres"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["jobs table"]}]
+  },
+  {
+    "name": "constraint stated by user",
+    "messages": [
+      {"role": "user", "content": "one hard requirement: everything has to run locally, no data can leave my machine. so no hosted LLM APIs"}
+    ],
+    "expected": [{"kind": "constraint", "status": "approved", "match": ["local|offline|leave"]}]
+  },
+  {
+    "name": "budget constraint plus decision",
+    "messages": [
+      {"role": "user", "content": "hosting has to stay under $10 a month. given that, let's put the frontend on Vercel's free tier"}
+    ],
+    "expected": [
+      {"kind": "constraint", "status": "approved", "match": ["10"]},
+      {"kind": "decision", "status": "approved", "match": ["vercel"]}
+    ]
+  },
+  {
+    "name": "user commits to a task",
+    "messages": [
+      {"role": "user", "content": "I'll write the migration for the users table tonight"}
+    ],
+    "expected": [{"kind": "task", "status": "open", "match": ["migration"]}]
+  },
+  {
+    "name": "assistant suggests a task",
+    "messages": [
+      {"role": "user", "content": "the tests keep failing randomly"},
+      {"role": "assistant", "content": "That looks like a race with the dev server's worker. You should add a test fixture that pauses the worker during integration tests."}
+    ],
+    "expected": [{"kind": "task", "status": "proposed", "match": ["fixture"]}]
+  },
+  {
+    "name": "chit-chat yields nothing",
+    "messages": [
+      {"role": "user", "content": "thanks, that explanation of pgvector indexes was really helpful"},
+      {"role": "assistant", "content": "Glad it helped! HNSW indexes trade build time for faster queries."}
+    ],
+    "expected": []
+  },
+  {
+    "name": "question about existing choice yields nothing",
+    "known": [{"type": "decision", "subject": "database", "current_state": {"value": "PostgreSQL"}, "status": "approved"}],
+    "messages": [
+      {"role": "user", "content": "remind me why we picked postgres again?"},
+      {"role": "assistant", "content": "You chose PostgreSQL because your data relationships were getting complex and you wanted joins and pgvector."}
+    ],
+    "expected": []
+  },
+  {
+    "name": "supersession reuses known subject",
+    "known": [{"type": "decision", "subject": "embedding model", "current_state": {"value": "nomic-embed-text"}, "status": "approved"}],
+    "messages": [
+      {"role": "user", "content": "switching embeddings to mxbai-embed-large, nomic was missing too many matches"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["mxbai"], "subject": "embedding model"}]
+  },
+  {
+    "name": "option picked by number",
+    "messages": [
+      {"role": "assistant", "content": "Two options for the dashboard: 1) Next.js with server components, 2) a plain Vite + React SPA. Option 1 fits better if you want SSR later."},
+      {"role": "user", "content": "go with option 2, I want it simple"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["vite"]}]
+  },
+  {
+    "name": "thinking out loud is not a decision",
+    "messages": [
+      {"role": "user", "content": "I'm leaning towards FastAPI over Django but let me sleep on it"}
+    ],
+    "expected": []
+  },
+  {
+    "name": "multiple items in one message",
+    "messages": [
+      {"role": "user", "content": "decided: we use pytest for tests and ruff for linting. also I need to set up CI on github actions this week"}
+    ],
+    "expected": [
+      {"kind": "decision", "status": "approved", "match": ["pytest"]},
+      {"kind": "decision", "status": "approved", "match": ["ruff"]},
+      {"kind": "task", "status": "open", "match": ["ci"]}
+    ]
+  },
+  {
+    "name": "assistant restates, user unrelated reply",
+    "messages": [
+      {"role": "assistant", "content": "I recommend switching the job queue to pg-boss for better retry semantics."},
+      {"role": "user", "content": "can you show me how the current claim_job function works first?"}
+    ],
+    "expected": [{"kind": "decision", "status": "proposed", "match": ["pg-boss"]}]
+  },
+  {
+    "name": "conditional is not a commitment",
+    "messages": [
+      {"role": "user", "content": "if ollama turns out too slow we might move extraction to a hosted model"}
+    ],
+    "expected": []
+  },
+  {
+    "name": "mixed agreement with modification",
+    "messages": [
+      {"role": "assistant", "content": "I'd store sessions in Redis with a 24h TTL."},
+      {"role": "user", "content": "sessions in postgres instead, but yes 24h TTL"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["postgres", "session"]}]
+  }
+]
