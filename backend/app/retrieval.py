@@ -4,11 +4,13 @@ Read-only over what the context engine writes. Candidate rows come from hybrid_s
 fused by RRF). Each row is either an entity embedding or a source chunk (an event's text). A chunk is folded
 into the entities that event produced (directly, or via derived events whose source_ref is the excerpt), so an
 excerpt inherits its entities' status: an excerpt whose decisions were all superseded is history, not current
-state. Chunks that produced no entity are returned as 'source' items.
+state. Chunks that produced no entity are returned as 'source' items, or as 'outdated' if they mention a value that was
+superseded after they were written (a note about the Mongo schema, written before the move to PostgreSQL).
 
 score = fused relevance (best row per item) x authority(status) x recency.
 """
 import json
+import re
 from datetime import datetime, timezone
 
 from .db import supabase as sb
@@ -17,8 +19,8 @@ from .embeddings import embed_query
 # Mild on purpose: RRF scores are compressed, so big multipliers would override relevance (a 0.5 weight on
 # raw sources buried the one excerpt that answered a question). Verified state wins ties.
 AUTHORITY = {"implemented": 1.0, "approved": 1.0, "open": 1.0, "done": 0.95, "proposed": 0.85,
-             "source": 0.85, "superseded": 0.5, "rejected": 0.5}
-HISTORY = ("superseded", "rejected")
+             "source": 0.85, "superseded": 0.5, "rejected": 0.5, "outdated": 0.5}
+HISTORY = ("superseded", "rejected", "outdated")
 RECENCY_HALF_LIFE_DAYS = 30
 CANDIDATES = 50
 
@@ -47,6 +49,29 @@ def _chunk_entities(event_ids: list[str]) -> dict[str, set[str]]:
     return out
 
 
+def _mentions(text: str, value: str) -> bool:
+    """Single-word values also match by prefix ('mongo' / 'MongoDB'); 5+ letters so 'post' isn't 'PostgreSQL'."""
+    text, value = text.lower(), value.lower()
+    if " " in value:
+        return value in text
+    return any(w.startswith(value) or (len(w) >= 5 and value.startswith(w)) for w in re.findall(r"[a-z0-9.]+", text))
+
+
+def _outdated(project_id: str, notes: dict[str, tuple[str, str]]) -> set[str]:
+    """Orphan chunks (event id -> (text, created_at)) that mention a value superseded after they were written.
+    The supersession time is the superseding event's, so it survives a rebuild."""
+    old = {e["id"]: e["current_state"].get("value") for e in sb.table("entities").select("id,current_state")
+           .eq("project_id", project_id).eq("status", "superseded").execute().data}
+    old = {k: v for k, v in old.items() if v}
+    if not old:
+        return set()
+    versions = (sb.table("entity_versions").select("entity_id,events(created_at)").in_("entity_id", list(old))
+                .eq("status", "superseded").execute().data)
+    changed = [(old[v["entity_id"]], datetime.fromisoformat(v["events"]["created_at"])) for v in versions]
+    return {k for k, (text, ts) in notes.items()
+            if any(datetime.fromisoformat(ts) < when and _mentions(text, value) for value, when in changed)}
+
+
 def search(project_id: str, query: str, limit: int = 10, include_history: bool = False) -> list[dict]:
     rows = sb.rpc("hybrid_search", {"query_embedding": embed_query(query), "query_text": query,
                                     "target_project_id": project_id, "match_count": CANDIDATES}).execute().data
@@ -68,6 +93,7 @@ def search(project_id: str, query: str, limit: int = 10, include_history: bool =
     if chunks:
         created = {e["id"]: e["created_at"] for e in sb.table("events").select("id,created_at")
                    .in_("id", list(chunks)).execute().data}
+        outdated = _outdated(project_id, {k: (c["content"], created[k]) for k, c in chunks.items()})
     results = []
     for k, rel in relevance.items():
         if k in ents:
@@ -81,10 +107,12 @@ def search(project_id: str, query: str, limit: int = 10, include_history: bool =
                     "user_quote": st.get("user_quote"), "updated_at": e["updated_at"]}
             ts = e["updated_at"]
         else:
+            if k in outdated and not include_history:
+                continue
             c = chunks[k]
             ts = created[k]
             item = {"kind": "source", "entity_id": None, "event_id": k, "content": c["content"],
-                    "status": "source", "updated_at": ts}
+                    "status": "outdated" if k in outdated else "source", "updated_at": ts}
         item["score"] = round(rel * AUTHORITY[item["status"]] * _recency(ts), 6)
         results.append(item)
     results.sort(key=lambda x: x["score"], reverse=True)
@@ -133,7 +161,7 @@ def get_context(project_id: str, task: str, max_tokens: int = 1500, max_items: i
     """Token-budgeted context for a task. contradictions: unresolved ones (service.get_contradictions)."""
     # Rejected suggestions are kept (so agents don't re-suggest them); superseded ones only appear in 'changes'.
     hits = [h for h in search(project_id, task, limit=max_items * 2, include_history=True)
-            if h["status"] != "superseded"][:max_items]
+            if h["status"] not in ("superseded", "outdated")][:max_items]
     ent_ids = [h["entity_id"] for h in hits if h["entity_id"]]
     excerpt = _excerpt_ids(ent_ids) if ent_ids else {}
     replaced = _replaced(ent_ids) if ent_ids else {}

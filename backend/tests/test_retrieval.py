@@ -124,3 +124,15 @@ def test_get_context_respects_token_budget(project, monkeypatch):
     full, small = service.get_context(project, "database choice"), service.get_context(project, "database choice", max_tokens=300)
     assert len(full["decisions"]) == 6 and not full["truncated"]
     assert 0 < len(small["decisions"]) < 6 and small["truncated"]
+
+
+def test_orphan_note_about_a_since_superseded_value_is_outdated(project, monkeypatch):
+    decision(project, monkeypatch, "we use mongodb for the database", "database", "MongoDB")
+    old = excerpt(project, monkeypatch, "the mongo bookings collection embeds participants, indexed on trip date", [])
+    decision(project, monkeypatch, "replacing mongodb with postgresql for the database", "database", "PostgreSQL")
+    new = excerpt(project, monkeypatch, "migrated the old mongo bookings collection into the bookings table", [])
+    query = "bookings collection indexed"
+    assert old["id"] not in [r["event_id"] for r in service.search_context(project, query)]
+    status = {r["event_id"]: r["status"] for r in service.search_context(project, query, include_history=True)}
+    assert status[old["id"]] == "outdated" and status[new["id"]] == "source"  # written after the change
+    assert old["id"] not in str(service.get_context(project, query))

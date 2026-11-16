@@ -18,7 +18,7 @@ from app import service
 from . import seed
 
 CASES = json.loads((pathlib.Path(__file__).parent / "cases.json").read_text())
-HISTORY = {"superseded", "rejected", "history"}
+HISTORY = {"superseded", "rejected", "outdated"}
 
 
 def represents(r, ents, truth):

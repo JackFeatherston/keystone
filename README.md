@@ -104,14 +104,15 @@ Batched checks mixed items up (a reason about item C attached to the pair A/B), 
 
 Rebuild: `cd backend && python -m app.rebuild <project> [--yes]` (stop the dev server first).
 
-Milestone 3 done (apart from the live client check): hybrid, status-aware retrieval and `get_context`. Retrieval eval: `cd backend && python -m evals.retrieval.run_retrieval_eval [-v]` (seeds and deletes a throwaway project; needs Ollama).
+Milestone 3 done: hybrid, status-aware retrieval and `get_context`. Retrieval eval: `cd backend && python -m evals.retrieval.run_retrieval_eval [-v]` (seeds and deletes a throwaway project; needs Ollama).
 
 | Retrieval eval (20 queries, k=5) | recall@5 | MRR | stale rate |
 |---|---|---|---|
 | vector search before M3 | 0.81 | 0.69 | 0.30 |
-| **hybrid + status-aware + ranking** | **0.88** | **0.71–0.75** | **0.05** |
+| hybrid + status-aware + ranking | 0.88 | 0.71–0.75 | 0.05 |
+| **+ orphan notes about a since-superseded value marked `outdated`** | **0.93–0.98** | **0.74–0.78** | **0.00** |
 
-MRR varies run to run (near-ties); the baseline MRR is within that noise, the recall and stale-rate gains are not. The 0.88 was stable over 4 runs.
+MRR varies run to run (near-ties); the baseline MRR is within that noise, the recall and stale-rate gains are not. The 0.88 was stable over 4 runs; the last row is 2 runs (recall gained because the stale Mongo-schema note no longer takes a top-5 slot).
 
 Thesis A/B: `python -m evals.retrieval.run_ab_eval [--model ...] [--judge ...] [-v]`. qwen2.5:7b answers 10 project questions, qwen2.5:7b judges against a reference and a known-outdated answer (2026-11-15, one run at temperature 0).
 
@@ -231,13 +232,19 @@ Starting point: `search_context` returns `content` + `similarity` only (no type/
 - [x] Thesis A/B (results in Status)
 - [x] Live check (2026-11-16, recipe-app; 5 prompts per client, one chat each, Keystone not mentioned). When read, Keystone context was used correctly: Claude built on PostgreSQL ("Keystone says you switched from SQLite"), offline, local folder, and called `sharp` "proposed… you haven't confirmed it yet". No stale fact presented as current; no tool calls on the control prompt (15% of 80). But only 4 reads for 6 project prompts across both clients (2 `get_context`, 1 `search_context`, 1 `get_project_state`), so clients don't reliably read before answering. The "no project named" prompt didn't test inference (asked mid-chat, both assumed recipe-app). ChatGPT's answers to prompts 1-3 weren't captured
 - [x] Fixed from the live check: `log_context` fired on plain questions and the client's own answers (9 junk proposals + a "task" that was a request done in-chat). Its description now says user commitments only, not questions or requests carried out in the chat. Extraction keeps one item per (kind, subject) per excerpt: 7 thumbnail items from one answer superseded each other (and the user's `sharp` proposal); the earlier "Drop OpenAI, we'll use Ollama" → "drop the OpenAI API" superseding Ollama was the same failure. Extraction eval unchanged (1.00 / 0.91 / 0.91). recipe-app cleaned up with manual events (Ollama re-approved with the original quote, junk rejected, `sharp` re-proposed, the in-chat request marked done)
-- [ ] The one item left open in the README is re-running the live check, this time with a fresh chat for each prompt. That properly tests whether the client can work out the project on its own, and whether log_context stays quiet on plain questions. If clients still answer without reading Keystone first, the next step is to strengthen the get_context description.
+- [x] Live re-check (2026-11-16, recipe-app; 7 prompts: 4 project questions, a general Postgres question, a "write a migration" request, a real decision). Tool calls taken from the server log (client by source IP), not from the clients' own reports: ChatGPT misreported its calls, listing prompts from the 2026-11-15 chat.
+  - `log_context` fixed: each client logged once, only the real decision ("add user accounts with email + password login, stored locally in Postgres"), verbatim; approved, and the second client's copy merged into the same decision (confidence 0.95). Nothing logged for the general question or the in-chat migration request (last check: 9 junk proposals).
+  - Reads: ChatGPT `list_projects` + `get_context` ×3 (last check: 4 reads across both clients). Claude ran all prompts in one chat: `get_project_state` once on the first prompt, reused for the next three; it also searched its own past chats (`conversation_search`). Answers that used Keystone stayed consistent with it (local Postgres auth, no Auth0/Clerk/OAuth, offline rule respected).
+  - Minor: the auth decision was filed as subject `auth provider`, value `Postgres` (vague value; title is right).
+- [ ] Still untested: does Claude read Keystone in a *fresh* chat for each project prompt? Re-run prompts 1-4 (meal-plans table + photo, auto-tagging API, thumbnails, shopping list with no project named) in separate Claude chats; if it answers without reading, strengthen the `get_context` description. Also: log MCP tool calls by name server-side, so checks don't depend on reconstructing them from the DB request log
 - [x] Merged into main (fast-forward, 2026-11-16)
-- [ ] Re-run the A/B with a stronger agent/judge than qwen2.5:7b; grow both eval sets from real projects (20 queries / 10 questions are easy to overfit)
-- [ ] Ranking: use M2's confidence once it has settled; orphan excerpts that describe superseded state (needs extraction to link them, or an "as of" date shown to the agent)
+- Decided (2026-11-16): no A/B re-run with a stronger model. Keystone stays local-only and a 14B model is too heavy for the 16GB dev machine, so qwen2.5:7b's scores are accepted as the baseline. Growing both eval sets from real projects is still worthwhile (20 queries / 10 questions are easy to overfit) and moves to Later
+- [x] Orphan excerpts that describe superseded state: a source chunk that produced no entity is `outdated` if it mentions a value (single words also by prefix, so "mongo" matches MongoDB) that was superseded after it was written; supersession time is taken from the superseding event, so it survives a rebuild. Hidden like superseded items (shown, labeled, with `include_history`; left out of `get_context`) → stale rate 0.05 → 0.00
+- Deferred: confidence in ranking. No eval case shows where it should reorder results; add one before weighting it
 - Decided: excerpt chunks inherit entity status (vs. entities only): keeps excerpts that produced no entity (e.g. the trail API limits) retrievable
 
 **Later**
+- [ ] Grow the retrieval and A/B eval sets from real projects
 - [ ] GitHub ingestion (webhooks for PRs, commits, issues, README) as evidence of implementation
 - [ ] Next.js dashboard: project overview, decision history, open tasks, context inspection ("what Keystone knows and where it learned it")
 - [ ] Replace shared API key with real Supabase Auth (JWT) and per-user access
