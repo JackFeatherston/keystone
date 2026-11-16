@@ -1,0 +1,102 @@
+{
+  "project": "Trailhead: booking app for guided hikes",
+  "steps": [
+    {"excerpt": [
+      {"role": "assistant", "content": "For the bookings data I'd start with MongoDB: documents map well to trips with nested participants."},
+      {"role": "user", "content": "ok let's go with mongo for now, we can store each trip as one document"}],
+     "items": [{"kind": "decision", "subject": "database", "title": "Use MongoDB for bookings", "value": "MongoDB", "reason": "trips map to documents with nested participants", "stated_by": "user", "user_quote": "let's go with mongo for now"}]},
+
+    {"excerpt": [{"role": "user", "content": "deploying to heroku for the beta, the free dynos are enough"}],
+     "items": [{"kind": "decision", "subject": "hosting", "title": "Host on Heroku", "value": "Heroku", "reason": "free dynos are enough for the beta", "stated_by": "user", "user_quote": "deploying to heroku for the beta"}]},
+
+    {"excerpt": [{"role": "user", "content": "we'll use Auth0 for login, google and email magic links"}],
+     "items": [{"kind": "decision", "subject": "authentication", "title": "Use Auth0 for login", "value": "Auth0", "reason": "google and email magic links out of the box", "stated_by": "user", "user_quote": "we'll use Auth0 for login"}]},
+
+    {"excerpt": [{"role": "user", "content": "transactional email goes through SendGrid, booking confirmations and receipts"}],
+     "items": [{"kind": "decision", "subject": "email provider", "title": "Send transactional email with SendGrid", "value": "SendGrid", "reason": "booking confirmations and receipts", "stated_by": "user", "user_quote": "transactional email goes through SendGrid"}]},
+
+    {"excerpt": [{"role": "user", "content": "the API will be GraphQL so the mobile app can fetch trips and guides in one query"}],
+     "items": [{"kind": "decision", "subject": "api style", "title": "GraphQL API", "value": "GraphQL", "reason": "mobile app fetches trips and guides in one query", "stated_by": "user", "user_quote": "the API will be GraphQL"}]},
+
+    {"note": [
+      {"role": "user", "content": "the mongo bookings collection has trip_id, guide_id and an embedded participants array; we index on trip date"}],
+     "stale": true, "key": "note:mongo-schema"},
+
+    {"note": [
+      {"role": "user", "content": "trail data comes from the national park service API. it updates nightly and they cap us at 1000 requests per day, so we cache it in our own db"}],
+     "key": "note:nps-api"},
+
+    {"excerpt": [
+      {"role": "user", "content": "relationships between guides, trips, waitlists and payments are getting messy in mongo. we're replacing MongoDB with PostgreSQL"}],
+     "items": [{"kind": "decision", "subject": "database", "title": "Use PostgreSQL", "value": "PostgreSQL", "reason": "relationships between guides, trips, waitlists and payments got too complex for documents", "stated_by": "user", "user_quote": "we're replacing MongoDB with PostgreSQL"}]},
+
+    {"excerpt": [
+      {"role": "user", "content": "heroku pricing changed, moving hosting to Fly.io. it has machines in Amsterdam too"}],
+     "items": [{"kind": "decision", "subject": "hosting", "title": "Host on Fly.io", "value": "Fly.io", "reason": "Heroku pricing changed; Fly has EU (Amsterdam) machines", "stated_by": "user", "user_quote": "moving hosting to Fly.io"}]},
+
+    {"excerpt": [
+      {"role": "user", "content": "now that we're on postgres let's drop Auth0 and use Supabase Auth, it's cheaper and lives next to the data"}],
+     "items": [{"kind": "decision", "subject": "authentication", "title": "Use Supabase Auth", "value": "Supabase Auth", "reason": "cheaper than Auth0 and lives next to the data", "stated_by": "user", "user_quote": "let's drop Auth0 and use Supabase Auth"}]},
+
+    {"excerpt": [
+      {"role": "user", "content": "sendgrid keeps landing in spam. switch transactional email to Postmark"}],
+     "items": [{"kind": "decision", "subject": "email provider", "title": "Send transactional email with Postmark", "value": "Postmark", "reason": "SendGrid emails were landing in spam", "stated_by": "user", "user_quote": "switch transactional email to Postmark"}]},
+
+    {"excerpt": [
+      {"role": "user", "content": "graphql caching is a pain on the CDN. we're going back to a plain REST API with OpenAPI docs"}],
+     "items": [{"kind": "decision", "subject": "api style", "title": "REST API with OpenAPI", "value": "REST", "reason": "GraphQL responses were hard to cache on the CDN", "stated_by": "user", "user_quote": "we're going back to a plain REST API"}]},
+
+    {"excerpt": [{"role": "user", "content": "payments are Stripe Checkout, guides get paid out with Stripe Connect"}],
+     "items": [{"kind": "decision", "subject": "payments", "title": "Stripe Checkout and Connect for payments", "value": "Stripe", "reason": "checkout for hikers, Connect for guide payouts", "stated_by": "user", "user_quote": "payments are Stripe Checkout"}],
+     "implemented": "payments:Stripe"},
+
+    {"excerpt": [{"role": "user", "content": "maps are Mapbox, we need the terrain style for trail previews"}],
+     "items": [{"kind": "decision", "subject": "maps", "title": "Mapbox for maps", "value": "Mapbox", "reason": "terrain style for trail previews", "stated_by": "user", "user_quote": "maps are Mapbox"}]},
+
+    {"excerpt": [{"role": "user", "content": "frontend is Next.js with the app router, deployed on the same Fly app"}],
+     "items": [{"kind": "decision", "subject": "frontend framework", "title": "Next.js frontend", "value": "Next.js", "reason": "app router, deployed alongside the API", "stated_by": "user", "user_quote": "frontend is Next.js with the app router"}]},
+
+    {"excerpt": [{"role": "user", "content": "CI is GitHub Actions: tests and a preview deploy on every PR"}],
+     "items": [{"kind": "decision", "subject": "ci", "title": "GitHub Actions for CI", "value": "GitHub Actions", "reason": "tests and preview deploys on every PR", "stated_by": "user", "user_quote": "CI is GitHub Actions"}],
+     "implemented": "ci:GitHub Actions"},
+
+    {"excerpt": [
+      {"role": "assistant", "content": "To speed up trip listings you could put Redis in front of Postgres as a cache."},
+      {"role": "user", "content": "no, not adding another service. postgres is fast enough with the right indexes"}],
+     "items": [{"kind": "decision", "subject": "cache", "title": "Redis cache for trip listings", "value": "Redis", "reason": "speed up trip listings", "stated_by": "assistant", "user_quote": ""}],
+     "reject": "cache:Redis"},
+
+    {"excerpt": [
+      {"role": "assistant", "content": "For trail search, Algolia would give typo-tolerant search with almost no setup."}],
+     "items": [{"kind": "decision", "subject": "search", "title": "Algolia for trail search", "value": "Algolia", "reason": "typo-tolerant search with little setup", "stated_by": "assistant", "user_quote": ""}]},
+
+    {"excerpt": [{"role": "user", "content": "hard rule: hosting has to stay under $50 a month until we have paying customers"}],
+     "items": [{"kind": "constraint", "subject": "hosting budget", "title": "Hosting under $50/month", "value": "under $50/month until paying customers", "reason": "pre-revenue", "stated_by": "user", "user_quote": "hosting has to stay under $50 a month"}]},
+
+    {"excerpt": [{"role": "user", "content": "because of GDPR all personal data must stay in the EU region"}],
+     "items": [{"kind": "constraint", "subject": "data residency", "title": "Personal data stays in the EU", "value": "EU region only", "reason": "GDPR", "stated_by": "user", "user_quote": "all personal data must stay in the EU region"}]},
+
+    {"excerpt": [{"role": "user", "content": "the booking flow has to meet WCAG 2.1 AA, a lot of our hikers use screen readers"}],
+     "items": [{"kind": "constraint", "subject": "accessibility", "title": "WCAG 2.1 AA for the booking flow", "value": "WCAG 2.1 AA", "reason": "many hikers use screen readers", "stated_by": "user", "user_quote": "the booking flow has to meet WCAG 2.1 AA"}]},
+
+    {"excerpt": [{"role": "user", "content": "booking API p95 latency must be under 300ms"}],
+     "items": [{"kind": "constraint", "subject": "booking latency", "title": "Booking API p95 under 300ms", "value": "p95 < 300ms", "reason": "checkout conversion", "stated_by": "user", "user_quote": "booking API p95 latency must be under 300ms"}]},
+
+    {"excerpt": [{"role": "user", "content": "i need to add rate limiting to the booking endpoint before launch"}],
+     "items": [{"kind": "task", "subject": "rate limiting", "title": "Add rate limiting to the booking endpoint", "value": "before launch", "reason": "abuse protection", "stated_by": "user", "user_quote": "i need to add rate limiting to the booking endpoint"}]},
+
+    {"excerpt": [{"role": "user", "content": "todo: retry failed Stripe webhooks with backoff"}],
+     "items": [{"kind": "task", "subject": "stripe webhook retries", "title": "Retry failed Stripe webhooks with backoff", "value": "", "reason": "missed payouts", "stated_by": "user", "user_quote": "retry failed Stripe webhooks with backoff"}]},
+
+    {"excerpt": [{"role": "user", "content": "I'll write the onboarding email sequence for new guides this week"}],
+     "items": [{"kind": "task", "subject": "guide onboarding emails", "title": "Write onboarding emails for new guides", "value": "", "reason": "", "stated_by": "user", "user_quote": "I'll write the onboarding email sequence for new guides"}]},
+
+    {"excerpt": [{"role": "user", "content": "migrate the users table from mongo to postgres"}],
+     "items": [{"kind": "task", "subject": "users migration", "title": "Migrate users from MongoDB to PostgreSQL", "value": "", "reason": "database switch", "stated_by": "user", "user_quote": "migrate the users table from mongo to postgres"}],
+     "implemented": "users migration:"},
+
+    {"excerpt": [
+      {"role": "assistant", "content": "Before launch you should load test the booking endpoint with k6 at 10x expected traffic."}],
+     "items": [{"kind": "task", "subject": "load testing", "title": "Load test the booking endpoint with k6", "value": "10x expected traffic", "reason": "verify the latency target before launch", "stated_by": "assistant", "user_quote": ""}]}
+  ]
+}

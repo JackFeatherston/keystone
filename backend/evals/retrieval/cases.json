@@ -1,0 +1,22 @@
+[
+  {"query": "what database are we using", "expect": ["database:PostgreSQL"], "stale": ["database:MongoDB", "note:mongo-schema"]},
+  {"query": "where is the app hosted", "expect": ["hosting:Fly.io"], "stale": ["hosting:Heroku"]},
+  {"query": "how do users log in", "expect": ["authentication:Supabase Auth"], "stale": ["authentication:Auth0"]},
+  {"query": "which service sends booking confirmation emails", "expect": ["email provider:Postmark"], "stale": ["email provider:SendGrid"]},
+  {"query": "is the API GraphQL or REST", "expect": ["api style:REST"], "stale": ["api style:GraphQL"]},
+  {"query": "should we put a cache in front of the database", "expect": [], "stale": ["cache:Redis"]},
+  {"query": "how do hikers pay and how do guides get paid", "expect": ["payments:Stripe"], "stale": []},
+  {"query": "rate limiting", "expect": ["rate limiting:before launch"], "stale": []},
+  {"query": "Postmark", "expect": ["email provider:Postmark"], "stale": []},
+  {"query": "WCAG", "expect": ["accessibility:WCAG 2.1 AA"], "stale": []},
+  {"query": "where can we store customer personal data", "expect": ["data residency:EU region only"], "stale": []},
+  {"query": "how fast does the booking endpoint need to be", "expect": ["booking latency:p95 < 300ms"], "stale": []},
+  {"query": "what's left to do before launch", "expect": ["rate limiting:before launch", "stripe webhook retries:", "guide onboarding emails:"], "stale": []},
+  {"query": "where does trail data come from and what are its limits", "expect": ["note:nps-api"], "stale": []},
+  {"query": "how should trail search work", "expect": ["search:Algolia"], "stale": []},
+  {"query": "which map provider do we use", "expect": ["maps:Mapbox"], "stale": []},
+  {"query": "what runs our tests on pull requests", "expect": ["ci:GitHub Actions"], "stale": []},
+  {"query": "bookings schema and indexes", "expect": ["database:PostgreSQL"], "stale": ["database:MongoDB", "note:mongo-schema"]},
+  {"query": "monthly hosting budget", "expect": ["hosting budget:under $50/month until paying customers"], "stale": ["hosting:Heroku"]},
+  {"query": "Auth0", "expect": ["authentication:Supabase Auth"], "stale": ["authentication:Auth0"]}
+]
