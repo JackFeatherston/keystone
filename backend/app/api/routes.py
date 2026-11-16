@@ -58,8 +58,13 @@ def get_state(project_id: str):
 
 
 @router.get("/projects/{project_id}/search", operation_id="search_context")
-def search(project_id: str, q: str, limit: int = 10):
-    return service.search_context(project_id, q, limit)
+def search(project_id: str, q: str, limit: int = 10, include_history: bool = False):
+    return service.search_context(project_id, q, limit, include_history)
+
+
+@router.get("/projects/{project_id}/context", operation_id="get_context")
+def context(project_id: str, task: str, max_tokens: int = 1500):
+    return service.get_context(project_id, task, max_tokens)
 
 
 @router.get("/projects/{project_id}/decisions", operation_id="get_decisions")

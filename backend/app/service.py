@@ -1,9 +1,9 @@
 """Shared operations used by both the REST API and the MCP tools."""
 import uuid
 
+from . import retrieval
 from .config import settings
 from .db import supabase as sb
-from .embeddings import embed
 from .extraction import render
 
 
@@ -112,6 +112,9 @@ def review(project_id: str, source: str, event_type: str, entity_id: str, **payl
     return add_event(project_id, source, event_type, {"entity_id": entity_id, **payload})
 
 
-def search_context(project_id: str, query: str, limit: int = 10) -> list[dict]:
-    return sb.rpc("match_embeddings", {"query_embedding": embed(query),
-                                       "target_project_id": project_id, "match_count": limit}).execute().data
+def search_context(project_id: str, query: str, limit: int = 10, include_history: bool = False) -> list[dict]:
+    return retrieval.search(project_id, query, limit, include_history)
+
+
+def get_context(project_id: str, task: str, max_tokens: int = 1500) -> dict:
+    return retrieval.get_context(project_id, task, max_tokens, contradictions=get_contradictions(project_id))

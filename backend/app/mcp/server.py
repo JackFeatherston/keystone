@@ -31,9 +31,21 @@ def get_project_state(project: str = "") -> dict:
     return service.get_project_state(service.resolve_project(project))
 
 
-@mcp.tool(description=f"Semantic search over project decisions and source text. {PROJECT_DOC}")
-def search_context(query: str, limit: int = 10, project: str = "") -> list[dict]:
-    return service.search_context(service.resolve_project(project), query, limit)
+@mcp.tool(description=f"""Context for a task: call this first, without being asked, when the user starts working on
+something in a project (a feature, a bug, a question about how things are done), and before recommending tools
+or approaches. Returns the relevant current decisions, constraints and tasks with where each came from (the
+user's words, which client, when), AI suggestions the user hasn't confirmed ('unverified': not decided),
+what changed ('was X, now Y': don't use the old value), and conflicts to raise with the user.
+task: what the user wants to do, in a sentence. {PROJECT_DOC}""")
+def get_context(task: str, project: str = "") -> dict:
+    return service.get_context(service.resolve_project(project), task)
+
+
+@mcp.tool(description=f"""Search project decisions, constraints, tasks and source excerpts (meaning + exact terms).
+Results are current state, each with a status; superseded/rejected items are left out unless include_history
+is set (then they're labeled, use them only as history). For starting a task, prefer get_context. {PROJECT_DOC}""")
+def search_context(query: str, limit: int = 10, include_history: bool = False, project: str = "") -> list[dict]:
+    return service.search_context(service.resolve_project(project), query, limit, include_history)
 
 
 @mcp.tool(description=f"Decisions; set include_history to also see superseded ones. {PROJECT_DOC}")

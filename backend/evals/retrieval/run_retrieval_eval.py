@@ -64,7 +64,7 @@ def main():
             if a.v and (stale or (case["expect"] and len(found) < len(case["expect"]))):
                 print(f"- {case['query']!r}: missing {sorted(set(case['expect']) - found)}, stale {stale}")
                 for r in results[:a.k]:
-                    print(f"    {r.get('status', '?'):11} {sorted(represents(r, ents, truth))}  {r['content'][:70]!r}")
+                    print(f"    {r.get('status', '?'):11} {sorted(represents(r, ents, truth))}  {(r.get('content') or r.get('title') or '')[:70]!r}")
         print(f"{len(CASES)} cases, k={a.k}: recall@{a.k} {sum(recalls) / len(recalls):.2f}  "
               f"MRR {sum(rrs) / len(rrs):.2f}  stale rate {stale_cases / len(CASES):.2f}")
     finally:
