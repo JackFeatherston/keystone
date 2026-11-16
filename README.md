@@ -174,8 +174,8 @@ Known tensions: a 7–8B model is weakest at exactly the user-stated vs. AI-infe
 - [x] Resolution fixes surfaced by extraction: an AI proposal never supersedes or downgrades approved state; confirming a proposal supersedes the old approved one
 - [x] Re-test ChatGPT connector against the new tools → calls `log_context` unprompted with verbatim user text; skips questions and hedged statements; Memcached superseded Redis; confirm/reject work (tested 2026-11-12 on `mcp-smoke-test`)
 - [x] Fix: ChatGPT told the user a decision was a "proposal" when the server had approved it, because `log_context` only returns `queued`. Tool description + response `note` now say the outcome is unknown and to check `get_decisions` etc.
-- [ ] Re-test Claude (claude.ai or desktop → Settings → Connectors → custom connector at `https://<ngrok domain>/mcp/?key=<KEYSTONE_API_KEY>`). Same script: a decision, a question, a hedged statement, a supersession, a task, then confirm/reject proposals. Check it calls `log_context` without being asked and copies user text verbatim
-- [ ] Refresh the ChatGPT connector and re-check that it no longer states approved/proposed after `log_context`
+- [x] Re-test Claude (claude.ai or desktop → Settings → Connectors → custom connector at `https://<ngrok domain>/mcp/?key=<KEYSTONE_API_KEY>`). Results below
+- [x] Refresh the ChatGPT connector and re-test. Results below
 - [x] Commit today's changes (`app/mcp/server.py`, new eval case, README)
 - [x] Extraction: "i need to add rate limiting before launch" is now an open task. Runs are deterministic, so no variance to rule out. Sharper decision/task wording fixed it and the Vercel decision-as-task miss: 0.81 / 0.76 / 0.76 → 0.94 / 0.88 / 0.88
 - [x] Known gap: `confirm_proposal` only checks that `user_quote` is non-empty. Decided: no guard (see "state resolution" above); such approvals get lower confidence
@@ -184,8 +184,9 @@ Known tensions: a 7–8B model is weakest at exactly the user-stated vs. AI-infe
 - [x] Rebuild entities from events (`python -m app.rebuild`), re-extracting excerpts → tests for id reuse and skipped reviews
 - [x] Re-test Claude (2026-11-15, `recipe-app`). Client behaved well: it called `log_context` unprompted with verbatim user text, skipped the question and the hedge, spotted the OpenAI vs offline conflict itself, and confirm/reject/mark_implemented worked. Extraction did not: SQLite was filed as a constraint, the offline constraint reused subject `database` and superseded it, and "let's use the OpenAI API to ..." became a task, so no contradiction was flagged. All added as eval cases and fixed (above); `recipe-app` was rebuilt with `app.rebuild`
 - [ ] Known issue (live replay of `recipe-app`): "Drop OpenAI, we'll generate tags locally with Ollama instead" produced three items: the Ollama decision, a "drop the OpenAI API" decision that superseded it, and a restated offline constraint. The same excerpt passes in the eval, so live output is noisier than the eval. Consider dropping same-subject duplicates within one excerpt, or a bigger model
-- [ ] ChatGPT test failed at step 1: it never called a tool and answered from its own memory (the log showed only the connector refresh). Added MCP server `instructions` + a `list_projects` description telling clients Keystone is the source of truth for project questions. Re-test with the connector explicitly enabled in the chat
-- [ ] Re-test both clients on contradictions: state a constraint, then a conflicting decision; check `get_project_state` surfaces it and the client asks the user / calls `dismiss_contradiction`
+- [x] ChatGPT, first try: it never called a tool and answered from its own memory (the log showed only the connector refresh). Fixed with MCP server `instructions` + a `list_projects` description saying Keystone is the source of truth for project questions
+- [x] ChatGPT retest (2026-11-15, `recipe-app`): answered "what database and why" from Keystone, quoting the recorded user words; listed open tasks, proposals with confidence, and 0 contradictions exactly as stored; logged verbatim user text; "Cloudinary" was flagged against the offline constraint, and "local folder instead" superseded it and cleared the flag; `mark_implemented` worked
+- [ ] `dismiss_contradiction` not yet exercised by a real client (in the test the only false flag had already become moot). Covered by integration tests
 
 ### Milestone 3 plan: retrieval
 
