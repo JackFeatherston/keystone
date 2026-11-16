@@ -150,5 +150,67 @@
       {"role": "user", "content": "sessions in postgres instead, but yes 24h TTL"}
     ],
     "expected": [{"kind": "decision", "status": "approved", "match": ["postgres", "session"]}]
+  },
+  {
+    "name": "real claude excerpt: we're using X (line-wrapped)",
+    "messages": [
+      {"role": "user", "content": "I'm working on recipe-app. We're using\n    SQLite for the database because it's just me\n    and I want zero setup"}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["sqlite"], "subject": "database"}]
+  },
+  {
+    "name": "real claude excerpt: offline constraint gets its own subject",
+    "known": [
+      {"type": "decision", "subject": "database", "current_state": {"value": "SQLite"}, "status": "approved"}
+    ],
+    "messages": [
+      {"role": "user", "content": "The app has to run fully offline on my \n    laptop, no cloud services."}
+    ],
+    "expected": [{"kind": "constraint", "status": "approved", "match": ["offline|cloud"], "subject_not": "database"}]
+  },
+  {
+    "name": "real claude excerpt: let's use X to do Y is a decision",
+    "known": [
+      {"type": "decision", "subject": "database", "current_state": {"value": "SQLite"}, "status": "approved"},
+      {"type": "constraint", "subject": "offline", "current_state": {"value": "no cloud services"}, "status": "approved"}
+    ],
+    "messages": [
+      {"role": "user", "content": "Let's use the OpenAI API to auto-generate \n    tags for recipes."}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["openai"]}]
+  },
+  {
+    "name": "real claude excerpt: user picks alternative, reuses subject",
+    "known": [
+      {"type": "decision", "subject": "tag generation", "current_state": {"value": "OpenAI API"}, "status": "approved"},
+      {"type": "constraint", "subject": "offline", "current_state": {"value": "no cloud services"}, "status": "approved"}
+    ],
+    "messages": [
+      {"role": "assistant", "content": "The open task 'Use the OpenAI API to auto-generate tags for recipes' contradicts the constraint 'Must run fully offline on my laptop, no cloud services'. Options: (1) run a local model with Ollama, (2) rule-based tagging, (3) OpenAI as an optional online-only extra. Want to go with Ollama and keep the offline constraint?"},
+      {"role": "user", "content": "Good catch. Drop OpenAI, we'll generate \n  tags\n     locally with Ollama instead."}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["ollama"], "subject": "tag generation"}]
+  },
+  {
+    "name": "real claude excerpt: user needs a task done (line-wrapped)",
+    "messages": [
+      {"role": "user", "content": "I need to add recipe import from URLs \n  before\n     I share it with friends."}
+    ],
+    "expected": [{"kind": "task", "status": "open", "match": ["import"]}]
+  },
+  {
+    "name": "real claude excerpt: drop X for Y yields only Y (live known state)",
+    "known": [
+      {"type": "decision", "subject": "database", "current_state": {"value": "PostgreSQL"}, "status": "approved"},
+      {"type": "task", "subject": "features", "current_state": {"value": "Add recipe import from URLs"}, "status": "open"},
+      {"type": "decision", "subject": "thumbnail generation", "current_state": {"value": "use the `sharp` npm package"}, "status": "proposed"},
+      {"type": "decision", "subject": "tag generation", "current_state": {"value": "use the OpenAI API to auto-generate tags for recipes"}, "status": "approved"},
+      {"type": "constraint", "subject": "app", "current_state": {"value": "must run fully offline"}, "status": "approved"}
+    ],
+    "messages": [
+      {"role": "assistant", "content": "The open task 'Use the OpenAI API to auto-generate tags for recipes' contradicts the constraint 'Must run fully offline on my laptop, no cloud services'. Options: (1) run a local model with Ollama, (2) rule-based tagging, (3) OpenAI as an optional online-only extra. Want to go with Ollama and keep the offline constraint?"},
+      {"role": "user", "content": "Good catch. Drop OpenAI, we'll generate \n  tags\n     locally with Ollama instead."}
+    ],
+    "expected": [{"kind": "decision", "status": "approved", "match": ["ollama"], "subject": "tag generation"}]
   }
 ]
