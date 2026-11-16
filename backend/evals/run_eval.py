@@ -3,7 +3,7 @@
     cd backend && python -m evals.run_eval [--model qwen2.5:7b-instruct] [-v]
 
 An expected item matches a predicted one of the same kind whose title/value/subject contains all its
-`match` keywords (case-insensitive; "a|b" = either). "found" = matched; "correct" = matched with the right status
+`match` keywords (case-insensitive; "a|b" = either), with optional `subject` / `subject_not` checks. "found" = matched; "correct" = matched with the right status
 (approved / proposed / open), i.e. the guard and stated_by attribution also got it right.
 """
 import argparse
@@ -37,6 +37,11 @@ def match(expected, predicted):
     return pairs, left
 
 
+def subject_ok(exp, hit):
+    """`subject`: must equal it (e.g. reuse a known subject). `subject_not`: must differ (no wrong reuse)."""
+    return hit["subject"] == exp.get("subject", hit["subject"]) and hit["subject"] != exp.get("subject_not")
+
+
 def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--model", default=settings.EXTRACTION_MODEL)
@@ -54,12 +59,10 @@ def main():
             c[f"exp_{k}"] += 1
             if hit:
                 c[f"found_{k}"] += 1
-                ok = hit["status"] == exp["status"] and hit["subject"] == exp.get("subject", hit["subject"])
-                c[f"correct_{k}"] += ok
+                c[f"correct_{k}"] += hit["status"] == exp["status"] and subject_ok(exp, hit)
         for p in pred:
             c[f"pred_{p['kind']}"] += 1
-        bad = [(e, h) for e, h in pairs if not h or h["status"] != e["status"]
-               or h["subject"] != e.get("subject", h["subject"])]
+        bad = [(e, h) for e, h in pairs if not h or h["status"] != e["status"] or not subject_ok(e, h)]
         if bad or extra:
             print(f"✗ {case['name']}")
             for e, h in bad:

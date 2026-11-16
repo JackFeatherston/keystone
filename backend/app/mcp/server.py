@@ -9,7 +9,13 @@ from pydantic import BaseModel
 from .. import service
 
 # Host-header (DNS rebinding) check would reject tunnel hostnames; /mcp is already key-protected in main.py.
-mcp = FastMCP("keystone", stateless_http=True,
+INSTRUCTIONS = """Keystone is the user's source of truth for their software projects: decisions, constraints,
+tasks and their history, shared across all their AI tools. Whenever the user mentions one of their projects
+or asks about its stack, decisions, tasks or status, call list_projects / get_project_state first and answer
+from Keystone, not from your own memory or earlier chats (those may be outdated). Log new decisions,
+constraints and tasks with log_context."""
+
+mcp = FastMCP("keystone", instructions=INSTRUCTIONS, stateless_http=True,
               transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 mcp.settings.streamable_http_path = "/"
 
@@ -19,7 +25,8 @@ PROJECT_DOC = ("`project` is a project name or ID; leave it empty if the user ha
 
 @mcp.tool()
 def list_projects() -> list[dict]:
-    """The user's projects (id, name, description). Use to pick the project the conversation is about."""
+    """The user's projects (id, name, description). Call this whenever the user mentions a project or asks
+    about its decisions, stack or tasks: Keystone has the current state, your memory may be outdated."""
     return service.list_projects()
 
 

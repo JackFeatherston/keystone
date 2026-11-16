@@ -15,15 +15,16 @@ SCHEMA = {
     "properties": {"items": {"type": "array", "items": {
         "type": "object",
         "properties": {
-            "kind": {"type": "string", "enum": ["decision", "task", "constraint"]},
-            "subject": {"type": "string"},
             "title": {"type": "string"},
             "value": {"type": "string"},
+            # kind after title/value: the model names the item before classifying it
+            "kind": {"type": "string", "enum": ["decision", "task", "constraint"]},
+            "subject": {"type": "string"},
             "reason": {"type": "string"},
             "stated_by": {"type": "string", "enum": ["user", "assistant"]},
             "user_quote": {"type": "string"},
         },
-        "required": ["kind", "subject", "title", "value", "reason", "stated_by", "user_quote"],
+        "required": ["title", "value", "kind", "subject", "reason", "stated_by", "user_quote"],
     }}},
     "required": ["items"],
 }
@@ -81,18 +82,13 @@ def _chat(system: str, user: str, schema: dict) -> dict:
 
 CONFLICT_SCHEMA = {
     "type": "object",
-    "properties": {"checks": {"type": "array", "items": {
-        "type": "object",
-        "properties": {"id": {"type": "string"}, "reason": {"type": "string"}, "contradicts": {"type": "boolean"}},
-        "required": ["id", "reason", "contradicts"],
-    }}},
-    "required": ["checks"],
+    "properties": {"reason": {"type": "string"}, "contradicts": {"type": "boolean"}},
+    "required": ["reason", "contradicts"],
 }
 
 CONFLICT_PROMPT = """You check a software project's recorded decisions and constraints for contradictions.
 
-You get one NEW item and a list of EXISTING items, each with an id like E1. For EVERY existing item, return
-one check: its id, a one-sentence reason, then contradicts = true if the NEW item and it cannot both hold
+You get two items, A and B. Give a one-sentence reason, then contradicts = true if A and B cannot both hold
 (doing one breaks or rules out the other), else false.
 
 Contradictions (true):
@@ -104,9 +100,10 @@ Not contradictions (false):
 - different topics that can both hold, e.g. "use MySQL" vs "deploy on Heroku".
 - related but compatible, e.g. "use Django" vs "use Postgres".
 
-Judge each pair on its own: NEW against that one item only, as if the other existing items did not exist.
 Judge the actual meaning: a choice that costs money, sends data elsewhere, adds a service, or uses a different
-language or license can break a constraint even if the words differ."""
+language or license can break a constraint even if the words differ. Take what an item says about itself at
+face value: if it says "locally", "self-hosted" or "offline", it does not use the network or a cloud service.
+If your reason contradicts what one of the items states, answer false."""
 
 
 def _describe(e: dict) -> str:
@@ -114,18 +111,13 @@ def _describe(e: dict) -> str:
 
 
 def find_conflicts(new: dict, existing: list[dict]) -> list[tuple[dict, str]]:
-    """Existing entities (other subjects) that logically contradict `new`, with a reason each."""
-    if not existing:
-        return []
-    ids = {f"E{i + 1}": e for i, e in enumerate(existing)}
-    listing = "\n".join(f"{k}: {_describe(e)}" for k, e in ids.items())
-    out = _chat(CONFLICT_PROMPT, f"NEW: {_describe(new)}\n\nEXISTING:\n{listing}", CONFLICT_SCHEMA)["checks"]
-    seen, res = set(), []
-    for c in out:
-        k = str(c.get("id", "")).strip()
-        if c.get("contradicts") is True and k in ids and k not in seen:
-            seen.add(k)
-            res.append((ids[k], c.get("reason", "")))
+    """Existing entities (other subjects) that logically contradict `new`, with a reason each.
+    One call per pair: batching several items into one call made a 7B model mix them up."""
+    res = []
+    for e in existing:
+        out = _chat(CONFLICT_PROMPT, f"A: {_describe(new)}\nB: {_describe(e)}", CONFLICT_SCHEMA)
+        if out.get("contradicts") is True:
+            res.append((e, out.get("reason", "")))
     return res
 
 
