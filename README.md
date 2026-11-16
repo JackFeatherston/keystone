@@ -56,16 +56,17 @@ Repo layout:
 supabase/migrations/   SQL schema, RLS, claim_job(), match_embeddings()
 backend/app/
   api/                 REST routes + API-key auth
-  context_engine.py    events -> entities/versions/relationships + embeddings
-  extraction.py        excerpt -> decisions/constraints/tasks (Ollama) + verbatim-quote guard
+  context_engine.py    events -> entities/versions/relationships + embeddings; confidence; contradictions
+  extraction.py        excerpt -> decisions/constraints/tasks (Ollama) + verbatim-quote guard; contradiction check
+  rebuild.py           rebuild a project's entities from its events (re-runs extraction)
   jobs/worker.py       job loop
   mcp/server.py        MCP tools
   service.py           shared operations (REST + MCP)
   embeddings.py        Ollama client
-backend/evals/         extraction eval set (cases.json) + scorer (run_eval.py)
+backend/evals/         extraction eval (cases.json, run_eval.py), contradiction eval (conflict_cases.json, run_conflict_eval.py)
 ```
 
-MCP tools: `list_projects`, `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `log_context`, `list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`. All but `list_projects` take an optional `project` (name or ID).
+MCP tools: `list_projects`, `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `log_context`, `list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`, `dismiss_contradiction`. All but `list_projects` take an optional `project` (name or ID).
 
 Example of what the engine should produce from "We're replacing MongoDB with PostgreSQL because our data relationships are getting complex": a new active decision (subject `database`, value PostgreSQL, with reason and source), while the MongoDB decision becomes `superseded` and linked, but stays queryable as history.
 
@@ -73,15 +74,30 @@ Example of what the engine should produce from "We're replacing MongoDB with Pos
 
 Milestone 1 done: runs end to end against a Supabase cloud project (create project → record decision → worker → search). Tests: `cd backend && pytest` (integration tests against the real DB; stop the dev server first, since `claim_job()` is global).
 
-Milestone 2 core done: `log_context` → server-side extraction (Ollama `qwen2.5:7b-instruct`) → guarded entity events → MCP review. Extraction eval: `cd backend && python -m evals.run_eval [--model <ollama model>] [-v]` (needs Ollama running; no DB writes).
+Milestone 2 done (apart from re-testing both clients against the new tools): `log_context` → server-side extraction (Ollama `qwen2.5:7b-instruct`) → guarded entity events → MCP review. Extraction eval: `cd backend && python -m evals.run_eval [--model <ollama model>] [-v]` (needs Ollama running; no DB writes).
 
 | Eval (18 cases) | precision | recall | correct status |
 |---|---|---|---|
 | qwen2.5:7b, first prompt | 0.69 | 0.69 | 0.69 |
 | qwen2.5:7b, current prompt | 0.87 | 0.81 | 0.81 |
 | llama3.1:8b, current prompt | 0.72 | 0.81 | 0.75 |
+| qwen2.5:7b, 19 cases, before task/decision wording | 0.81 | 0.76 | 0.76 |
+| **qwen2.5:7b, 19 cases, current prompt** | **0.94** | **0.88** | **0.88** |
+| llama3.1:8b, 19 cases, current prompt | 0.74 | 0.82 | 0.76 |
 
-Remaining misses are in the safe direction (unanswered assistant suggestions dropped, one decision filed as a task), not false approvals. Grow `evals/cases.json` from real excerpts before tuning further; 18 cases is easy to overfit.
+Runs are deterministic at temperature 0 (two identical runs, 2026-11-15). Remaining misses are in the safe direction (two unanswered assistant suggestions dropped, one extra proposal), not false approvals. Grow `evals/cases.json` from real excerpts before tuning further; 19 cases is easy to overfit.
+
+Contradiction check: `cd backend && python -m evals.run_conflict_eval [--model ...]` (10 cases).
+
+| Contradiction eval (10 cases) | precision | recall |
+|---|---|---|
+| qwen2.5:7b, first prompt (return conflicts only) | 0.67 | 0.33 |
+| **qwen2.5:7b, current prompt (verdict per item)** | **0.86** | **1.00** |
+| llama3.1:8b, current prompt | 0.50 | 1.00 |
+
+Remaining false positive: "supabase-py" flagged against "Supabase Postgres". False flags are cheap (flag only, dismissable), missed ones aren't, so recall is the priority.
+
+Rebuild: `cd backend && python -m app.rebuild <project> [--yes]` (stop the dev server first).
 
 ## Run
 
@@ -140,6 +156,13 @@ Focus is **engine depth, specifically extraction quality**.
 
 Known tensions: a 7–8B model is weakest at exactly the user-stated vs. AI-inferred distinction, so expect more legitimate decisions to land as proposals than with today's client-side calls. Pushed excerpts still depend on the client choosing to call the tool, so eval cases should look like what clients actually send, not clean transcripts.
 
+### Decided: state resolution (end of Milestone 2)
+
+- **Confidence is rule-based, from provenance**, not self-reported by the LLM (small models calibrate poorly). Proposed 0.3; approved: manual 0.95, verbatim-quote guarded 0.9, confirmed via `confirm_proposal` 0.8 (the quote is client-reported); implemented/done 0.95. +0.05 per later user restatement (once per event, max 0.99); −0.2 while in an unresolved contradiction. Recomputed on every change, so it's rebuildable.
+- **Contradictions are cross-subject and flag only.** Same-subject changes are supersession, as before. When a decision/constraint becomes approved, the LLM checks it against approved/implemented items on *other* subjects (e.g. "must run offline" vs "use the OpenAI API"). A hit is a `contradicts` relationship with a reason, listed in `get_project_state` (`contradictions`). Nothing is superseded automatically. It's resolved when one side changes (supersession) or the user dismisses it (`dismiss_contradiction` → `contradiction_dismissed` event; the link is kept, marked dismissed). Proposals are not checked.
+- **Rebuild replays and re-extracts.** The projection is wiped. The extractor's derived events are deleted and regenerated from each `context_logged` excerpt with the current prompt/model, and all other events are replayed in order. Derived events are machine output, so regenerating them doesn't break "events are the source of truth": the excerpts are. Rebuilt entities reuse the old id for the same (type, subject, value), so review events keep pointing at the right entity. Reviews whose target disappeared (e.g. a new subject name) are skipped and reported. Not paginated (fine below ~1000 events per project).
+- **`confirm_proposal` quote stays unguarded.** The server can't see the client's conversation, so it can't verify the quote. The quote is kept as an audit trail, and these approvals get lower confidence (0.8). Revisit with teams / real auth.
+
 **Context engine (Milestone 2)**
 - [x] Eval set + scoring script (fixtures of realistic excerpts with expected entities; precision/recall per entity type) → baseline score
 - [x] `log_context` MCP tool → `context_logged` event → extraction job → Ollama extractor producing decisions/tasks/constraints with provenance → eval score reported, tests pass
@@ -151,16 +174,34 @@ Known tensions: a 7–8B model is weakest at exactly the user-stated vs. AI-infe
 - [x] Fix: ChatGPT told the user a decision was a "proposal" when the server had approved it, because `log_context` only returns `queued`. Tool description + response `note` now say the outcome is unknown and to check `get_decisions` etc.
 - [ ] Re-test Claude (claude.ai or desktop → Settings → Connectors → custom connector at `https://<ngrok domain>/mcp/?key=<KEYSTONE_API_KEY>`). Same script: a decision, a question, a hedged statement, a supersession, a task, then confirm/reject proposals. Check it calls `log_context` without being asked and copies user text verbatim
 - [ ] Refresh the ChatGPT connector and re-check that it no longer states approved/proposed after `log_context`
-- [ ] Commit today's changes (`app/mcp/server.py`, new eval case, README)
-- [ ] Extraction: "i need to add rate limiting before launch" should be an open task. Live it came out as a proposed task, in the eval as an approved constraint (new case in `evals/cases.json`, currently failing). Eval is now 0.81 / 0.76 / 0.76 on 19 cases; check run-to-run variance before tuning
-- [ ] Known gap: `confirm_proposal` only checks that `user_quote` is non-empty, so a client can approve with text the user never said. In the ChatGPT test the quote was generated from the user's button choices (acceptable). Decide whether this needs a guard
+- [x] Commit today's changes (`app/mcp/server.py`, new eval case, README)
+- [x] Extraction: "i need to add rate limiting before launch" is now an open task. Runs are deterministic, so no variance to rule out. Sharper decision/task wording fixed it and the Vercel decision-as-task miss: 0.81 / 0.76 / 0.76 → 0.94 / 0.88 / 0.88
+- [x] Known gap: `confirm_proposal` only checks that `user_quote` is non-empty. Decided: no guard (see "state resolution" above); such approvals get lower confidence
 - [ ] Note: ChatGPT invented an assistant turn in one `log_context` excerpt. Harmless now (only user text is evidence), but keep in mind
-- [ ] (Later in M2) Contradiction detection and confidence scoring in state resolution
-- [ ] (Later in M2) Rebuild entities from events (reprocessing when logic improves)
+- [x] Contradiction detection (cross-subject, flag only) + eval set; rule-based confidence scoring → tests pass
+- [x] Rebuild entities from events (`python -m app.rebuild`), re-extracting excerpts → tests for id reuse and skipped reviews
+- [ ] Re-test both clients on contradictions: state a constraint, then a conflicting decision; check `get_project_state` surfaces it and the client asks the user / calls `dismiss_contradiction`
+
+### Milestone 3 plan: retrieval
+
+**Goal:** an agent starting a task gets the current, correct, attributed context in one call. Measure retrieval quality, and whether that context makes the agent better (first test of the MVP thesis).
+
+Starting point: `search_context` returns `content` + `similarity` only (no type/status), so superseded decisions and old excerpt chunks come back as if current. No full-text search; `nomic-embed-text` task prefixes unused; project filter runs after the global HNSW scan (can return < `limit`); provenance exists (entity → version → event → `source_ref` excerpt) but isn't surfaced.
+
+**Kept separate from M2.** M3 reads what M2 writes and runs at query time; it doesn't change how entities, statuses, versions or relationships are produced.
+- Don't touch `context_engine.py`, `extraction.py`, `evals/cases.json`. M3 lives in a new migration and `evals/retrieval/`, plus new functions/tools added to `service.py`, `mcp/server.py` and `embeddings.py` (M2 also edits the first two; add, don't rewrite).
+- The retrieval eval seeds its fixture project with structured events (`decision_confirmed`, `task_created`, proposals, supersessions), not `context_logged`, so scores don't move with extraction prompt/model changes.
+- No dependence on confidence scoring (M2); rank without it, add later.
 
 **Retrieval (Milestone 3)**
-- [ ] Hybrid search (vector + full-text), ranking by relevance, authority, recency, confidence
-- [ ] Task-specific context packages that exclude superseded facts, with source attribution
+- [ ] Retrieval eval + scorer (`evals/retrieval/`): seeded fixture project, queries labeled with expected entities; recall@5, MRR, **stale rate** (superseded/rejected returned as current) → baseline for current `search_context`
+- [ ] Status-aware results: join type/status/subject/date; exclude superseded/rejected unless `include_history`; excerpt chunks inherit the status of entities derived from them (via `source_ref`, at query time) → stale rate 0
+- [ ] Embedding fixes: `embed()` defaults to the `search_document:` prefix (engine call sites unchanged), new `embed_query()` with `search_query:`; one-off backfill script to re-embed (not M2's rebuild); HNSW iterative scan → recall@5 above baseline
+- [ ] Hybrid search: `tsvector` column + GIN index, `hybrid_search()` SQL function merging vector + full-text by reciprocal rank fusion → exact-term eval queries hit
+- [ ] Ranking: fusion score × authority (implemented > approved > open > proposed) × recency; weights tuned on the eval
+- [ ] `get_context(task, project)` MCP tool: token-budgeted package of active decisions/constraints/tasks, proposals marked *unverified*, change notes ("was MongoDB → now PostgreSQL"), attribution (client, date, `user_quote`, excerpt id). Keep `search_context` for ad-hoc lookups → integration tests; live check that Claude and ChatGPT call it at task start unprompted
+- [ ] Thesis A/B: ~10 questions on the fixture project answered with no context / `search_context` / `get_context`, LLM-graded for correctness and stale-fact errors → results table here
+- Open: excerpt chunks inherit entity status (current plan) vs. return only entities + quotes, no raw chunks
 
 **Later**
 - [ ] GitHub ingestion (webhooks for PRs, commits, issues, README) as evidence of implementation

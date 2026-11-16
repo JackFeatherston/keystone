@@ -54,7 +54,33 @@ def get_project_state(project_id: str) -> dict:
     constraints = (sb.table("entities").select("*").eq("project_id", project_id).eq("type", "constraint")
                    .in_("status", ["approved", "implemented"]).execute().data)
     return {"project": project, "decisions": get_decisions(project_id), "constraints": constraints,
-            "open_tasks": get_open_tasks(project_id), "pending_proposals": list_proposals(project_id)}
+            "open_tasks": get_open_tasks(project_id), "pending_proposals": list_proposals(project_id),
+            "contradictions": get_contradictions(project_id)}
+
+
+def get_contradictions(project_id: str) -> list[dict]:
+    """Unresolved: not dismissed, and both sides still approved/implemented."""
+    rels = (sb.table("relationships").select("*").eq("project_id", project_id)
+            .eq("relationship_type", "contradicts").execute().data)
+    rels = [r for r in rels if not r["metadata"].get("dismissed")]
+    if not rels:
+        return []
+    ids = list({r["source_entity_id"] for r in rels} | {r["target_entity_id"] for r in rels})
+    ents = {e["id"]: e for e in sb.table("entities").select("*").in_("id", ids)
+            .in_("status", ["approved", "implemented"]).execute().data}
+    return [{"id": r["id"], "reason": r["metadata"].get("reason", ""),
+             "a": ents[r["source_entity_id"]], "b": ents[r["target_entity_id"]]}
+            for r in rels if r["source_entity_id"] in ents and r["target_entity_id"] in ents]
+
+
+def dismiss_contradiction(project_id: str, source: str, contradiction_id: str, user_quote: str) -> dict:
+    """The user says both items hold. Validated now, applied via the event worker."""
+    match = next((c for c in get_contradictions(project_id) if c["id"] == contradiction_id), None)
+    if not match:
+        raise ValueError(f"No unresolved contradiction {contradiction_id} in this project")
+    return add_event(project_id, source, "contradiction_dismissed",
+                     {"source_entity_id": match["a"]["id"], "target_entity_id": match["b"]["id"],
+                      "user_quote": user_quote})
 
 
 def log_context(project_id: str, source: str, messages: list[dict]) -> dict:

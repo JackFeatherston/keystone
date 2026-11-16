@@ -12,6 +12,7 @@ from app.db import supabase as sb
 @pytest.fixture(autouse=True)
 def stub_embed(monkeypatch):
     monkeypatch.setattr(context_engine, "embed", lambda text: [0.0] * 768)
+    monkeypatch.setattr(context_engine.extraction, "find_conflicts", lambda new, existing: [])
 
 
 @pytest.fixture
@@ -291,3 +292,127 @@ def test_job_not_claimed_after_three_attempts(project):
     (jid,) = make_jobs(project, 1)
     sb.table("jobs").update({"attempts": 3}).eq("id", jid).execute()
     assert sb.rpc("claim_job").execute().data == []
+
+
+# ---- confidence (rule-based from provenance) ----
+def conf(pid, value):
+    return next(e["confidence"] for e in entities(pid) if e["current_state"].get("value") == value)
+
+
+def test_confidence_reflects_how_item_was_established(project):
+    decide(project, "claude", "decision_proposed", "MySQL", subject="a")
+    decide(project, "manual", "decision_approved", "PostgreSQL", subject="b")
+    decide(project, "claude", "decision_confirmed", "Redis", subject="c", user_quote="use redis")
+    decide(project, "claude", "decision_proposed", "Fly", subject="d")
+    (fly,) = [e for e in service.list_proposals(project) if e["subject"] == "d"]
+    review(project, "proposal_confirmed", fly["id"], user_quote="ok fly it is")
+    assert (conf(project, "MySQL"), conf(project, "PostgreSQL"), conf(project, "Redis"), conf(project, "Fly")) == \
+        (0.3, 0.95, 0.9, 0.8)
+    review(project, "entity_implemented", fly["id"], evidence="deployed")
+    assert conf(project, "Fly") == 0.95
+
+
+def test_user_restatement_raises_confidence_once_per_event(project):
+    decide(project, "claude", "decision_confirmed", "Redis", user_quote="use redis")
+    ev = decide(project, "claude", "decision_confirmed", "Redis", user_quote="yes redis")
+    context_engine.process_event(ev)  # retry of the same event: no extra bump
+    decide(project, "claude", "decision_proposed", "Redis")  # AI restating: no bump
+    assert conf(project, "Redis") == 0.95
+
+
+# ---- contradictions (LLM stubbed) ----
+@pytest.fixture
+def conflicts_with(monkeypatch):
+    """Stub the checker: the new item contradicts any existing one whose value is in `targets`."""
+    calls, targets = [], set()
+    def fake(new, existing):
+        calls.append(new["current_state"]["value"])
+        return [(e, "can't both hold") for e in existing if e["current_state"]["value"] in targets]
+    monkeypatch.setattr(context_engine.extraction, "find_conflicts", fake)
+    return targets, calls
+
+
+def test_contradiction_is_flagged_and_lowers_confidence(project, conflicts_with):
+    targets, _ = conflicts_with
+    decide(project, "manual", "decision_approved", "fully offline", subject="hosting")
+    targets.add("fully offline")
+    decide(project, "claude", "decision_confirmed", "OpenAI API", subject="llm", user_quote="use openai")
+    (c,) = service.get_contradictions(project)
+    assert {c["a"]["current_state"]["value"], c["b"]["current_state"]["value"]} == {"fully offline", "OpenAI API"}
+    assert c["reason"] == "can't both hold"
+    assert service.get_project_state(project)["contradictions"][0]["id"] == c["id"]
+    assert (conf(project, "fully offline"), conf(project, "OpenAI API")) == (0.75, 0.7)
+    by_value = {e["current_state"]["value"]: e["status"] for e in entities(project)}
+    assert by_value == {"fully offline": "approved", "OpenAI API": "approved"}  # flag only
+
+
+def test_superseding_one_side_resolves_contradiction(project, conflicts_with):
+    targets, _ = conflicts_with
+    decide(project, "manual", "decision_approved", "fully offline", subject="hosting")
+    targets.add("fully offline")
+    decide(project, "manual", "decision_approved", "OpenAI API", subject="llm")
+    targets.clear()
+    decide(project, "manual", "decision_approved", "local Ollama", subject="llm")
+    assert service.get_contradictions(project) == []
+    assert conf(project, "fully offline") == 0.95
+
+
+def test_dismissed_contradiction_is_kept_as_history(project, conflicts_with):
+    targets, _ = conflicts_with
+    decide(project, "manual", "decision_approved", "fully offline", subject="hosting")
+    targets.add("fully offline")
+    decide(project, "manual", "decision_approved", "OpenAI API", subject="llm")
+    (c,) = service.get_contradictions(project)
+    ev = service.dismiss_contradiction(project, "claude", c["id"], "both are fine, openai is only for dev")
+    drain(project)
+    assert service.get_contradictions(project) == []
+    assert conf(project, "fully offline") == 0.95
+    rel = sb.table("relationships").select("metadata").eq("id", c["id"]).single().execute().data
+    assert rel["metadata"]["dismissed"]["event_id"] == ev["id"]
+    with pytest.raises(ValueError):
+        service.dismiss_contradiction(project, "claude", c["id"], "again")
+
+
+def test_proposals_are_not_checked_for_contradictions(project, conflicts_with):
+    _, calls = conflicts_with
+    decide(project, "manual", "decision_approved", "fully offline", subject="hosting")
+    decide(project, "claude", "decision_proposed", "OpenAI API", subject="llm")
+    assert calls == ["fully offline"]
+    (prop,) = service.list_proposals(project)
+    review(project, "proposal_confirmed", prop["id"], user_quote="yes use openai")
+    assert calls == ["fully offline", "OpenAI API"]  # checked once it becomes approved
+
+
+# ---- rebuild from events ----
+def test_rebuild_reextracts_and_keeps_reviews(project, monkeypatch):
+    from app.rebuild import rebuild
+    out = [item("decision", "PostgreSQL", "user", "use postgres"),
+           item("task", "write migration", "assistant", subject="migration")]
+    monkeypatch.setattr(context_engine.extraction, "extract", lambda msgs, known: out)
+    ctx = service.log_context(project, "claude", [{"role": "user", "content": "use postgres"},
+                                                  {"role": "assistant", "content": "next: write a migration"}])
+    drain(project)
+    (task,) = service.list_proposals(project)
+    review(project, "proposal_confirmed", task["id"], user_quote="yes")
+    old_derived = {e["id"] for e in sb.table("events").select("id").eq("source_ref", ctx["id"]).execute().data}
+    before = {e["id"]: e["status"] for e in entities(project)}
+
+    r = rebuild(project)
+    assert r["skipped"] == [] and r["excerpts"] == 1
+    assert {e["id"]: e["status"] for e in entities(project)} == before  # same ids, review re-applied
+    new_derived = {e["id"] for e in sb.table("events").select("id").eq("source_ref", ctx["id"]).execute().data}
+    assert len(new_derived) == 2 and not new_derived & old_derived
+
+
+def test_rebuild_reports_reviews_it_cannot_apply(project, monkeypatch):
+    from app.rebuild import rebuild
+    out = [item("decision", "MySQL", "assistant")]
+    monkeypatch.setattr(context_engine.extraction, "extract", lambda msgs, known: out)
+    service.log_context(project, "claude", [{"role": "user", "content": "hm"}, {"role": "assistant", "content": "use mysql"}])
+    drain(project)
+    (prop,) = service.list_proposals(project)
+    review(project, "proposal_rejected", prop["id"])
+    out[0] = item("decision", "MySQL", "assistant", subject="sql database")  # improved extractor, new subject
+    r = rebuild(project)
+    assert [(t, s) for t, _, s in r["skipped"]] == [("proposal_rejected", "missing")]
+    assert entities(project)[0]["status"] == "proposed"

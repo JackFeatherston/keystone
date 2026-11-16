@@ -31,9 +31,9 @@ SCHEMA = {
 PROMPT = """You extract project knowledge from a conversation between a USER and an AI ASSISTANT about a software project.
 
 Return only items that are firm and worth remembering. Kinds:
-- decision: a committed choice about the project (technology, design, approach, process). value = the choice itself, e.g. "PostgreSQL".
+- decision: a committed choice about the project (technology, design, approach, process, where something is hosted). value = the choice itself, e.g. "PostgreSQL". "let's put X on Y" / "we'll use Y" is a decision, not a task.
 - constraint: a requirement or limitation the project must respect, e.g. "must run fully offline", "hosting under $20/month". value = the constraint.
-- task: concrete work someone committed to doing, e.g. "write migration for users table". value = what needs to be done.
+- task: concrete work someone committed to doing or says needs doing ("I'll do X", "I need to do X"), e.g. "write migration for users table". value = what needs to be done. A deadline ("before launch") does not make it a constraint.
 
 stated_by:
 - "user": the USER stated it, or explicitly agreed to it ("yes, let's do that", "go with option 2"). Then user_quote MUST be copied character for character from one USER message: the shortest span that shows the commitment. Never paraphrase it, never quote the ASSISTANT.
@@ -64,16 +64,69 @@ def extract(messages: list[dict], known: list[dict]) -> list[dict]:
     """Candidate items (unguarded). `known` = active entities, so the model can reuse subjects."""
     known_txt = "\n".join(f"- {e['type']} / {e['subject']}: {e['current_state'].get('value')} ({e['status']})"
                           for e in known) or "(none)"
+    return _chat(PROMPT, f"Existing subjects:\n{known_txt}\n\nConversation:\n\n{render(messages)}", SCHEMA)["items"]
+
+
+def _chat(system: str, user: str, schema: dict) -> dict:
     r = httpx.post(
         f"{settings.OLLAMA_URL}/api/chat",
-        json={"model": settings.EXTRACTION_MODEL, "stream": False, "format": SCHEMA,
+        json={"model": settings.EXTRACTION_MODEL, "stream": False, "format": schema,
               "options": {"temperature": 0},
-              "messages": [{"role": "system", "content": PROMPT},
-                           {"role": "user", "content": f"Existing subjects:\n{known_txt}\n\nConversation:\n\n{render(messages)}"}]},
+              "messages": [{"role": "system", "content": system}, {"role": "user", "content": user}]},
         timeout=300,
     )
     r.raise_for_status()
-    return json.loads(r.json()["message"]["content"])["items"]
+    return json.loads(r.json()["message"]["content"])
+
+
+CONFLICT_SCHEMA = {
+    "type": "object",
+    "properties": {"checks": {"type": "array", "items": {
+        "type": "object",
+        "properties": {"id": {"type": "string"}, "reason": {"type": "string"}, "contradicts": {"type": "boolean"}},
+        "required": ["id", "reason", "contradicts"],
+    }}},
+    "required": ["checks"],
+}
+
+CONFLICT_PROMPT = """You check a software project's recorded decisions and constraints for contradictions.
+
+You get one NEW item and a list of EXISTING items, each with an id like E1. For EVERY existing item, return
+one check: its id, a one-sentence reason, then contradicts = true if the NEW item and it cannot both hold
+(doing one breaks or rules out the other), else false.
+
+Contradictions (true):
+- constraint "Windows support required" vs decision "use a macOS-only UI toolkit".
+- constraint "no paid services" vs decision "use Datadog for monitoring".
+- decision "store files on S3" vs constraint "all data stays on-premises".
+
+Not contradictions (false):
+- different topics that can both hold, e.g. "use MySQL" vs "deploy on Heroku".
+- related but compatible, e.g. "use Django" vs "use Postgres".
+
+Judge each pair on its own: NEW against that one item only, as if the other existing items did not exist.
+Judge the actual meaning: a choice that costs money, sends data elsewhere, adds a service, or uses a different
+language or license can break a constraint even if the words differ."""
+
+
+def _describe(e: dict) -> str:
+    return f"{e['type']} ({e['subject']}): {e['title']}. {e['current_state'].get('value') or ''}".strip()
+
+
+def find_conflicts(new: dict, existing: list[dict]) -> list[tuple[dict, str]]:
+    """Existing entities (other subjects) that logically contradict `new`, with a reason each."""
+    if not existing:
+        return []
+    ids = {f"E{i + 1}": e for i, e in enumerate(existing)}
+    listing = "\n".join(f"{k}: {_describe(e)}" for k, e in ids.items())
+    out = _chat(CONFLICT_PROMPT, f"NEW: {_describe(new)}\n\nEXISTING:\n{listing}", CONFLICT_SCHEMA)["checks"]
+    seen, res = set(), []
+    for c in out:
+        k = str(c.get("id", "")).strip()
+        if c.get("contradicts") is True and k in ids and k not in seen:
+            seen.add(k)
+            res.append((ids[k], c.get("reason", "")))
+    return res
 
 
 def _norm(s: str) -> str:

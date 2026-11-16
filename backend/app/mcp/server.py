@@ -23,7 +23,10 @@ def list_projects() -> list[dict]:
     return service.list_projects()
 
 
-@mcp.tool(description=f"Current project overview: active decisions, constraints, open tasks and pending proposals. {PROJECT_DOC}")
+@mcp.tool(description=f"""Current project overview: active decisions, constraints, open tasks, pending proposals,
+and contradictions (approved items that conflict with each other). Each item has a confidence (0-1) based on
+how it was established. If there are contradictions, point them out and ask the user which one holds: log
+their answer with log_context, or call dismiss_contradiction if both hold. {PROJECT_DOC}""")
 def get_project_state(project: str = "") -> dict:
     return service.get_project_state(service.resolve_project(project))
 
@@ -100,3 +103,13 @@ def mark_implemented(client: Literal["claude", "chatgpt"], entity_id: str, evide
                      project: str = "") -> dict:
     return service.review(service.resolve_project(project), client, "entity_implemented", entity_id,
                           evidence=evidence)
+
+
+@mcp.tool(description=f"""Dismiss a contradiction (id from get_project_state) when the user says both items hold.
+If instead one of them should change, log the user's answer with log_context. user_quote: the user's exact words.
+{PROJECT_DOC}""")
+def dismiss_contradiction(client: Literal["claude", "chatgpt"], contradiction_id: str, user_quote: str,
+                          project: str = "") -> dict:
+    if not user_quote.strip():
+        raise ValueError("user_quote is required: the user's exact words")
+    return service.dismiss_contradiction(service.resolve_project(project), client, contradiction_id, user_quote)
