@@ -94,7 +94,8 @@ def search(project_id: str, query: str, limit: int = 10, include_history: bool =
 # ---- context packages ----
 PACKAGE_NOTE = ("Current project state relevant to the task, most relevant first. decisions/constraints/tasks "
                 "are confirmed by the user (or marked implemented/done). 'unverified' items are AI suggestions the "
-                "user has not confirmed: don't treat them as decided. 'changes' lists what each item replaced; "
+                "user has not confirmed: don't treat them as decided. 'rejected' are suggestions the user turned "
+                "down: don't re-suggest them without a new reason. 'changes' lists what each item replaced; "
                 "don't use the old value. 'notes' are raw source excerpts. 'contradictions' need the user's input.")
 SECTION = {"decision": "decisions", "constraint": "constraints", "task": "tasks"}
 
@@ -130,25 +131,27 @@ def _replaced(entity_ids: list[str]) -> dict[str, list[dict]]:
 def get_context(project_id: str, task: str, max_tokens: int = 1500, max_items: int = 12,
                 contradictions: list[dict] | None = None) -> dict:
     """Token-budgeted context for a task. contradictions: unresolved ones (service.get_contradictions)."""
-    hits = search(project_id, task, limit=max_items)
+    # Rejected suggestions are kept (so agents don't re-suggest them); superseded ones only appear in 'changes'.
+    hits = [h for h in search(project_id, task, limit=max_items * 2, include_history=True)
+            if h["status"] != "superseded"][:max_items]
     ent_ids = [h["entity_id"] for h in hits if h["entity_id"]]
     excerpt = _excerpt_ids(ent_ids) if ent_ids else {}
     replaced = _replaced(ent_ids) if ent_ids else {}
 
     pkg = {"task": task, "note": PACKAGE_NOTE, "decisions": [], "constraints": [], "tasks": [],
-           "unverified": [], "changes": [], "notes": [], "contradictions": [], "truncated": False}
+           "unverified": [], "rejected": [], "changes": [], "notes": [], "contradictions": [], "truncated": False}
     budget = max_tokens - _tokens(pkg)
     for h in hits:
         if h["kind"] == "source":
             section, item = "notes", {"excerpt_id": h["event_id"], "text": h["content"][:500],
                                       "date": h["updated_at"][:10]}
         else:
-            section = "unverified" if h["status"] == "proposed" else SECTION[h["kind"]]
+            section = {"proposed": "unverified", "rejected": "rejected"}.get(h["status"], SECTION[h["kind"]])
             item = {"id": h["entity_id"], "title": h["title"], "value": h["value"], "status": h["status"],
                     "confidence": h["confidence"], "since": h["updated_at"][:10],
                     "source": {"client": h["source"], "user_quote": h["user_quote"],
                                "excerpt_id": excerpt.get(h["entity_id"])}}
-            if section == "unverified":
+            if section in ("unverified", "rejected"):
                 item["kind"] = h["kind"]
             if h["reason"]:
                 item["reason"] = h["reason"]

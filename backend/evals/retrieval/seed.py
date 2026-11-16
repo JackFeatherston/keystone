@@ -54,6 +54,9 @@ def seed() -> tuple[str, dict]:
                                         ("reject", "proposal_rejected", {"user_quote": ""})):
                 if field in step:
                     context_engine.process_event(_event(pid, etype, {"entity_id": _entity_id(pid, step[field]), **extra}))
+    except BaseException:
+        drop(pid)  # don't leave a half-seeded project behind
+        raise
     finally:
         extraction.extract, extraction.find_conflicts = orig_extract, orig_conflicts
     return pid, {"event_keys": event_keys, "stale_notes": stale_notes}

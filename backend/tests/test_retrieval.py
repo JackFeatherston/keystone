@@ -108,6 +108,16 @@ def test_get_context_package(project, monkeypatch):
     assert pkg["truncated"] is False
 
 
+def test_get_context_lists_rejected_suggestions(project, monkeypatch):
+    excerpt(project, monkeypatch, "what about a redis cache?",
+            [{"kind": "decision", "subject": "cache", "title": "Redis cache", "value": "Redis", "stated_by": "assistant", "user_quote": ""}])
+    (ent,) = sb.table("entities").select("id").eq("project_id", project).execute().data
+    _process(project, "proposal_rejected", {"entity_id": ent["id"], "user_quote": "no"})
+    pkg = service.get_context(project, "add a redis cache")
+    assert [r["title"] for r in pkg["rejected"]] == ["Redis cache"]
+    assert "decisions" not in pkg and "unverified" not in pkg
+
+
 def test_get_context_respects_token_budget(project, monkeypatch):
     for i in range(6):
         decision(project, monkeypatch, f"database choice number {i} with a fairly long explanation", f"s{i}", f"v{i}")

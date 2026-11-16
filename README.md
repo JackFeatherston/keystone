@@ -53,20 +53,23 @@ Ollama (local): embeddings
 Repo layout:
 
 ```
-supabase/migrations/   SQL schema, RLS, claim_job(), match_embeddings()
+supabase/migrations/   SQL schema, RLS, claim_job(), match_embeddings(), hybrid_search()
 backend/app/
   api/                 REST routes + API-key auth
   context_engine.py    events -> entities/versions/relationships + embeddings; confidence; contradictions
   extraction.py        excerpt -> decisions/constraints/tasks (Ollama) + verbatim-quote guard; contradiction check
   rebuild.py           rebuild a project's entities from its events (re-runs extraction)
+  retrieval.py         hybrid search -> status-aware ranked results; get_context packages
+  reembed.py           recompute all stored vectors (after an embedding change)
   jobs/worker.py       job loop
   mcp/server.py        MCP tools
   service.py           shared operations (REST + MCP)
-  embeddings.py        Ollama client
-backend/evals/         extraction eval (cases.json, run_eval.py), contradiction eval (conflict_cases.json, run_conflict_eval.py)
+  embeddings.py        Ollama client (nomic task prefixes: embed / embed_query)
+backend/evals/         extraction eval (cases.json, run_eval.py), contradiction eval (conflict_cases.json, run_conflict_eval.py),
+                       retrieval/ (fixture.json seed project, cases.json + run_retrieval_eval.py, ab_cases.json + run_ab_eval.py)
 ```
 
-MCP tools: `list_projects`, `get_project_state`, `search_context`, `get_decisions`, `get_open_tasks`, `log_context`, `list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`, `dismiss_contradiction`. All but `list_projects` take an optional `project` (name or ID).
+MCP tools: `list_projects`, `get_project_state`, `get_context`, `search_context`, `get_decisions`, `get_open_tasks`, `log_context`, `list_proposals`, `confirm_proposal`, `reject_proposal`, `mark_implemented`, `dismiss_contradiction`. All but `list_projects` take an optional `project` (name or ID).
 
 Example of what the engine should produce from "We're replacing MongoDB with PostgreSQL because our data relationships are getting complex": a new active decision (subject `database`, value PostgreSQL, with reason and source), while the MongoDB decision becomes `superseded` and linked, but stays queryable as history.
 
@@ -98,6 +101,25 @@ Contradiction check: `cd backend && python -m evals.run_conflict_eval [--model .
 Remaining false positive: "supabase-py" flagged against "Supabase Postgres". False flags are cheap (flag only, dismissable), missed ones aren't, so recall is the priority.
 
 Rebuild: `cd backend && python -m app.rebuild <project> [--yes]` (stop the dev server first).
+
+Milestone 3 done (apart from the live client check): hybrid, status-aware retrieval and `get_context`. Retrieval eval: `cd backend && python -m evals.retrieval.run_retrieval_eval [-v]` (seeds and deletes a throwaway project; needs Ollama).
+
+| Retrieval eval (20 queries, k=5) | recall@5 | MRR | stale rate |
+|---|---|---|---|
+| vector search before M3 | 0.81 | 0.69 | 0.30 |
+| **hybrid + status-aware + ranking** | **0.88** | **0.71–0.75** | **0.05** |
+
+MRR varies run to run (near-ties); the baseline MRR is within that noise, the recall and stale-rate gains are not. The 0.88 was stable over 4 runs.
+
+Thesis A/B: `python -m evals.retrieval.run_ab_eval [--model ...] [--judge ...] [-v]`. qwen2.5:7b answers 10 project questions, qwen2.5:7b judges against a reference and a known-outdated answer (2026-11-15, one run at temperature 0).
+
+| Agent context | correct | presents an outdated choice as current |
+|---|---|---|
+| none | 0/10 | 1/10 |
+| raw vector search (pre-M3 `search_context`) | 6/10 | 3/10 (Auth0, GraphQL, "we decided on Algolia") |
+| **`get_context`** | **9/10** | **0/10** |
+
+The one `get_context` miss is a judge error (it listed exactly the three open tasks). The 7B judge is noisy: before it was asked to write a reason first, it misgraded three answers. First evidence for the thesis, on a small synthetic project with a weak agent; the outdated-answer column is the point: raw search hands the agent stale facts with nothing marking them stale.
 
 ## Run
 
@@ -194,14 +216,18 @@ Starting point: `search_context` returns `content` + `similarity` only (no type/
 - No dependence on confidence scoring (M2); rank without it, add later.
 
 **Retrieval (Milestone 3)**
-- [ ] Retrieval eval + scorer (`evals/retrieval/`): seeded fixture project, queries labeled with expected entities; recall@5, MRR, **stale rate** (superseded/rejected returned as current) → baseline for current `search_context`
-- [ ] Status-aware results: join type/status/subject/date; exclude superseded/rejected unless `include_history`; excerpt chunks inherit the status of entities derived from them (via `source_ref`, at query time) → stale rate 0
-- [ ] Embedding fixes: `embed()` defaults to the `search_document:` prefix (engine call sites unchanged), new `embed_query()` with `search_query:`; one-off backfill script to re-embed (not M2's rebuild); HNSW iterative scan → recall@5 above baseline
-- [ ] Hybrid search: `tsvector` column + GIN index, `hybrid_search()` SQL function merging vector + full-text by reciprocal rank fusion → exact-term eval queries hit
-- [ ] Ranking: fusion score × authority (implemented > approved > open > proposed) × recency; weights tuned on the eval
-- [ ] `get_context(task, project)` MCP tool: token-budgeted package of active decisions/constraints/tasks, proposals marked *unverified*, change notes ("was MongoDB → now PostgreSQL"), attribution (client, date, `user_quote`, excerpt id). Keep `search_context` for ad-hoc lookups → integration tests; live check that Claude and ChatGPT call it at task start unprompted
-- [ ] Thesis A/B: ~10 questions on the fixture project answered with no context / `search_context` / `get_context`, LLM-graded for correctness and stale-fact errors → results table here
-- Open: excerpt chunks inherit entity status (current plan) vs. return only entities + quotes, no raw chunks
+- [x] Retrieval eval + scorer (`evals/retrieval/`): seeded fixture project (27 steps, 5 supersessions, a rejection, proposals, orphan notes), 20 labeled queries; recall@5, MRR, stale rate → baseline 0.81 / 0.69 / 0.30
+- [x] Status-aware results: chunks fold into the entities they produced (so excerpts inherit status and each fact appears once); superseded/rejected hidden unless `include_history` → stale rate 0.30 → 0.05 (remaining: an orphan note about the old Mongo schema, which produced no entity to inherit from)
+- [x] Embedding fixes: nomic prefixes, `python -m app.reembed` backfill (run 2026-11-15, 39 rows), HNSW iterative scan inside `hybrid_search()`
+- [x] Hybrid search: `fts` column + GIN, `hybrid_search()` with RRF; full-text ORs query lexemes so questions still match → exact-term queries (`WCAG`, `Postmark`, `Auth0`) hit
+- [x] Ranking: RRF × authority × recency. Authority is deliberately mild (1.0 / 0.95 / 0.85 / 0.5): a 0.5 weight on raw sources buried the one excerpt that answered a question. The eval can't tell flat from mild weights (no case where status should reorder), so weights are a judgement call, not tuned
+- [x] `get_context` MCP tool + `GET /projects/{id}/context`: decisions/constraints/tasks with attribution (client, `user_quote`, excerpt id, date), `unverified` proposals, `rejected` suggestions (added after the A/B: without them the agent re-suggested Redis), `changes` ("was MongoDB → now PostgreSQL"), notes, contradictions; token budget (~1500)
+- [x] Thesis A/B (results in Status)
+- [ ] Live check: do Claude and ChatGPT call `get_context` at the start of a task unprompted? (needs a connector refresh)
+- [ ] Merge `milestone-3` into main once M2's in-flight edits are committed (`mcp/server.py` is touched by both)
+- [ ] Re-run the A/B with a stronger agent/judge than qwen2.5:7b; grow both eval sets from real projects (20 queries / 10 questions are easy to overfit)
+- [ ] Ranking: use M2's confidence once it has settled; orphan excerpts that describe superseded state (needs extraction to link them, or an "as of" date shown to the agent)
+- Decided: excerpt chunks inherit entity status (vs. entities only): keeps excerpts that produced no entity (e.g. the trail API limits) retrievable
 
 **Later**
 - [ ] GitHub ingestion (webhooks for PRs, commits, issues, README) as evidence of implementation

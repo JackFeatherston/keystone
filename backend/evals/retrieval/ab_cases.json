@@ -1,0 +1,12 @@
+[
+  {"question": "Which database should the new waitlist table go in?", "answer": "PostgreSQL", "outdated": "MongoDB"},
+  {"question": "Which service should I use to send the password reset email?", "answer": "Postmark", "outdated": "SendGrid"},
+  {"question": "How should I add 'log in with Google'?", "answer": "Through Supabase Auth", "outdated": "Through Auth0"},
+  {"question": "I'm adding an endpoint for guide profiles. GraphQL resolver or REST endpoint?", "answer": "A REST endpoint (documented with OpenAPI)", "outdated": "A GraphQL resolver"},
+  {"question": "Where should I deploy a new background worker, and is there a cost limit?", "answer": "On Fly.io; total hosting must stay under $50/month", "outdated": "On Heroku"},
+  {"question": "Can I store hikers' profile photos in a US-region S3 bucket?", "answer": "No: personal data must stay in the EU region (GDPR)", "outdated": null},
+  {"question": "Should I add Redis to speed up trip listings?", "answer": "No: the user rejected adding another service; use Postgres with the right indexes", "outdated": "Yes, add Redis"},
+  {"question": "Which trail search provider did we decide on?", "answer": "None decided: Algolia was suggested but the user hasn't confirmed it", "outdated": "Algolia was decided/chosen"},
+  {"question": "What tasks are still open before launch?", "answer": "Rate limiting on the booking endpoint, retrying failed Stripe webhooks, and the guide onboarding emails (load testing was only suggested)", "outdated": null},
+  {"question": "How many requests per day can we make to the trail data API?", "answer": "1000 per day (National Park Service API, updated nightly, so we cache it)", "outdated": null}
+]
