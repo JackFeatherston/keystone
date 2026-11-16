@@ -72,10 +72,12 @@ class Message(BaseModel):
 
 @mcp.tool(description=f"""Share the relevant part of this conversation so every AI tool stays in sync.
 
-Call this, without being asked, whenever the conversation contains something worth remembering about
-the project: the user commits to a choice ("yeah we're now using Postgres"), agrees to or rejects one of
-your suggestions, states a requirement or limitation, or commits to a task. Also call it when you
-recommend something worth tracking. Keystone extracts decisions, constraints and tasks in the background.
+Call this, without being asked, when the USER commits to something about the project: a choice ("yeah
+we're now using Postgres"), agreeing to or rejecting one of your suggestions, a requirement or limitation,
+or a task they will do later. Keystone extracts decisions, constraints and tasks in the background.
+
+Don't call it for questions, or for requests you answer or carry out in this chat ("write the migration",
+"how should I build X?"): your own answer is not a project decision until the user agrees to it.
 
 messages: the relevant turns, in order. USER messages MUST be copied verbatim (their exact words are the
 evidence that they decided something; paraphrased user text is only stored as a proposal). Include the

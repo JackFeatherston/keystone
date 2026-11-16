@@ -132,11 +132,17 @@ def quote_is_verbatim(quote: str, messages: list[dict]) -> bool:
 
 
 def to_events(items: list[dict], messages: list[dict]) -> list[tuple[str, dict]]:
-    """Apply the verbatim-quote guard and map items to entity event types."""
-    out = []
+    """Apply the verbatim-quote guard and map items to entity event types. One item per (kind, subject):
+    a later item on the same subject would supersede the earlier one, e.g. "Drop OpenAI, we'll use Ollama"
+    extracted as both "use Ollama" and "drop OpenAI" left "drop OpenAI" as the decision. The first wins."""
+    out, seen = [], set()
     for it in items:
         if not it.get("title", "").strip():
             continue
+        key = (it["kind"], (it.get("subject") or it["title"]).strip().lower())
+        if key in seen:
+            continue
+        seen.add(key)
         by_user = it.get("stated_by") == "user" and quote_is_verbatim(it.get("user_quote", ""), messages)
         payload = {k: it.get(k, "") for k in ("title", "subject", "value", "reason")}
         if by_user:
