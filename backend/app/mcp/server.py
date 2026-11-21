@@ -1,6 +1,8 @@
 """MCP server (streamable HTTP, mounted at /mcp). Used by Claude directly and by ChatGPT
 (developer-mode connectors). ChatGPT can alternatively use the REST API's /openapi.json as Actions."""
-from typing import Literal
+import json
+import logging
+from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
@@ -15,7 +17,35 @@ or asks about its stack, decisions, tasks or status, call list_projects / get_pr
 from Keystone, not from your own memory or earlier chats (those may be outdated). Log new decisions,
 constraints and tasks with log_context."""
 
-mcp = FastMCP("keystone", instructions=INSTRUCTIONS, stateless_http=True,
+log = logging.getLogger("keystone.mcp")
+if not log.handlers:  # nothing else configures logging; uvicorn only sets up its own loggers
+    _handler = logging.StreamHandler()
+    _handler.setFormatter(logging.Formatter("%(asctime)s  MCP %(message)s", "%Y-%m-%d %H:%M:%S"))
+    log.addHandler(_handler)
+    log.setLevel(logging.INFO)
+
+
+def _summarize(arguments: dict[str, Any]) -> str:
+    # log_context sends whole excerpts: log the message count, not the text.
+    args = {k: (f"<{len(v)} messages>" if k == "messages" and isinstance(v, list) else v)
+            for k, v in arguments.items()}
+    return json.dumps(args, ensure_ascii=False, default=str)
+
+
+class LoggingFastMCP(FastMCP):
+    """Logs every tool call (name, arguments, user agent), so live client checks can read which tools were
+    called instead of reconstructing them from the DB request log."""
+
+    async def call_tool(self, name: str, arguments: dict[str, Any]):
+        try:
+            agent = self.get_context().request_context.request.headers.get("user-agent", "?")
+        except Exception:  # no HTTP request (e.g. called directly in tests)
+            agent = "?"
+        log.info("%s %s  [%s]", name, _summarize(arguments), agent)
+        return await super().call_tool(name, arguments)
+
+
+mcp = LoggingFastMCP("keystone", instructions=INSTRUCTIONS, stateless_http=True,
               transport_security=TransportSecuritySettings(enable_dns_rebinding_protection=False))
 mcp.settings.streamable_http_path = "/"
 
