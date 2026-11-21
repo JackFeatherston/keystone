@@ -2,6 +2,7 @@
 (developer-mode connectors). ChatGPT can alternatively use the REST API's /openapi.json as Actions."""
 import json
 import logging
+import time
 from typing import Any, Literal
 
 from mcp.server.fastmcp import FastMCP
@@ -33,16 +34,22 @@ def _summarize(arguments: dict[str, Any]) -> str:
 
 
 class LoggingFastMCP(FastMCP):
-    """Logs every tool call (name, arguments, user agent), so live client checks can read which tools were
-    called instead of reconstructing them from the DB request log."""
+    """Logs every tool call (name, arguments, server-side duration, ok/ERROR, user agent), so live client checks
+    can read which tools were called and how long they took instead of reconstructing them from the DB request log."""
 
     async def call_tool(self, name: str, arguments: dict[str, Any]):
         try:
             agent = self.get_context().request_context.request.headers.get("user-agent", "?")
         except Exception:  # no HTTP request (e.g. called directly in tests)
             agent = "?"
-        log.info("%s %s  [%s]", name, _summarize(arguments), agent)
-        return await super().call_tool(name, arguments)
+        start, status = time.perf_counter(), "ERROR"
+        try:
+            result = await super().call_tool(name, arguments)
+            status = "ok"
+            return result
+        finally:
+            ms = round((time.perf_counter() - start) * 1000)
+            log.info("%s %s  %dms %s [%s]", name, _summarize(arguments), ms, status, agent)
 
 
 mcp = LoggingFastMCP("keystone", instructions=INSTRUCTIONS, stateless_http=True,
