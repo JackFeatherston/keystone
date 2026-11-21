@@ -12,10 +12,10 @@ from .. import service
 
 # Host-header (DNS rebinding) check would reject tunnel hostnames; /mcp is already key-protected in main.py.
 INSTRUCTIONS = """Keystone is the user's source of truth for their software projects: decisions, constraints,
-tasks and their history, shared across all their AI tools. Whenever the user mentions one of their projects
-or asks about its stack, decisions, tasks or status, call list_projects / get_project_state first and answer
-from Keystone, not from your own memory or earlier chats (those may be outdated). Log new decisions,
-constraints and tasks with log_context."""
+tasks and their history, shared across all their AI tools. Whenever the user works on or asks about one of
+their projects, call get_context first (with the task in a sentence) and answer from Keystone, not from your
+own memory or earlier chats (those may be outdated). Use get_project_state only when the user asks for an
+overview of the whole project. Log new decisions, constraints and tasks with log_context."""
 
 log = logging.getLogger("keystone.mcp")
 if not log.handlers:  # nothing else configures logging; uvicorn only sets up its own loggers
@@ -63,7 +63,8 @@ def list_projects() -> list[dict]:
 @mcp.tool(description=f"""Current project overview: active decisions, constraints, open tasks, pending proposals,
 and contradictions (approved items that conflict with each other). Each item has a confidence (0-1) based on
 how it was established. If there are contradictions, point them out and ask the user which one holds: log
-their answer with log_context, or call dismiss_contradiction if both hold. {PROJECT_DOC}""")
+their answer with log_context, or call dismiss_contradiction if both hold. For a specific task or question,
+call get_context instead. {PROJECT_DOC}""")
 def get_project_state(project: str = "") -> dict:
     return service.get_project_state(service.resolve_project(project))
 
